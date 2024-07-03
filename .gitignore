@@ -169,3 +169,4 @@ cython_debug/
 
 # Cython C extension files
 *.c
+*.html

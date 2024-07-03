@@ -46,3 +46,13 @@ To build and run tests:
 ```bash
 CYTHON_TRACE=1 python setup.py build_ext -i && coverage run -m pytest && coverage report
 ```
+
+We recommend the use of VSCode with the extension `ktnrg45.vscode-cython` to enable code completion and highlighting in `.pyx` (Cython) files.
+
+## Research
+
+To install the research dependencies, after the installation steps above, run:
+
+```bash
+pip install -e ".[research]"
+```

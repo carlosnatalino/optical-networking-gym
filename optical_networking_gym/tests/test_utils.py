@@ -8,3 +8,5 @@ def test_span():
     prelim = s.attenuation_normalized
     s.set_attenuation(attenuation=0.3)
     assert s.attenuation_normalized != prelim
+
+    s.attenuation_normalized = 10

@@ -31,6 +31,11 @@ dev = [
     "coverage[toml]",
 ]
 
+research = [
+    "matplotlib",
+    "jupyterlab",
+]
+
 [tool.setuptools]
 py-modules = []
 
