@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm", "Cython"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "optical_networking_gym"
+authors = [
+    {name = "Carlos Natalino", email = "carlos.natalino@chalmers.se"},
+]
+description = "An Open-Source Toolkit for Benchmarking Resource Assignment Problems in Optical Networks"
+readme = "README.md"
+requires-python = ">=3.9"
+version = "0.0.1-alpha"
+keywords = ["optical networking", "reinforcement learning", "gym"]
+license = {text = "GPLv3"}
+classifiers = [
+    "Programming Language :: Python :: 3",
+]
+dependencies = [
+    "gymnasium",
+    "numpy",
+    "matplotlib",
+    "networkx",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+    "mypy",
+    "pytest",
+    "coverage[toml]",
+]
+
+[tool.setuptools]
+py-modules = []
+
+[tool.pytest]
+testpaths = ["tests/"]
+
+[tool.coverage.run]
+plugins = ["Cython.Coverage"]
