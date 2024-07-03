@@ -9,4 +9,8 @@ def test_span():
     s.set_attenuation(attenuation=0.3)
     assert s.attenuation_normalized != prelim
 
-    s.attenuation_normalized = 10
+    try:
+        s.attenuation_normalized = 10
+        raise ValueError("This attribute should not be writable.")
+    except AttributeError:
+        pass

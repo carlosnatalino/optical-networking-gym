@@ -25,3 +25,6 @@ cdef class Span:
     def set_noise_figure(self, noise_figure: float) -> None:
         self.noise_figure_db = noise_figure
         self.noise_figure_normalized = 10 ** (self.noise_figure_db / 10)  # dB ===> norm
+    
+    def __repr__(self) -> str:
+        return f"Span(length={self.length:.2f}, attenuation_db_km={self.attenuation_db_km}, noise_figure_db={self.noise_figure_db})"
