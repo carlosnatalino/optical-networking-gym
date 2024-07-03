@@ -9,8 +9,10 @@ setup(
         [
             # "optical_networking_gym/envs/*.pyx",
             "optical_networking_gym/**/*.pyx",
+            # "optical_networking_gym/**/*.py",
         ],
         # include_path=[np.get_include()],
         language_level="3",
+        compiler_directives={"profile": True, "linetrace": True},
     ),
 )

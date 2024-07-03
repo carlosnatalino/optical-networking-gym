@@ -1,5 +1,7 @@
+# cython: linetrace=True
 import cython
 import numpy as np
+
 
 @cython.cclass
 class Span:
@@ -10,7 +12,7 @@ class Span:
     noise_figure_db = cython.declare(cython.double, visibility='readonly')
     noise_figure_normalized = cython.declare(cython.double, visibility='readonly')
 
-    def __init__(self, length: float, attenuation: float, noise_figure: float):
+    def __cinit__(self, length: float, attenuation: float, noise_figure: float):
         self.length = length
 
         self.attenuation_db_km = attenuation
@@ -29,3 +31,19 @@ class Span:
     
     def __repr__(self) -> str:
         return f"Span(length={self.length:.2f}, attenuation_db_km={self.attenuation_db_km}, noise_figure_db={self.noise_figure_db})"
+
+
+@cython.cclass
+class Link:
+    id: cython.declare(cython.int, visibility='readonly')
+    node1: cython.declare(cython.str, visibility='readonly')
+    node2: cython.declare(cython.str, visibility='readonly')
+    length: cython.declare(cython.double, visibility='readonly')
+    spans: tuple[Span] = cython.declare(cython.tuple, visibility='readonly')
+
+    def __cinit__(self, id: cython.int, node1: cython.str, node2: cython.str, length: cython.double, spans: cython.tuple):
+        self.id = id
+        self.node1 = node1
+        self.node2 = node2
+        self.length = length
+        self.spans = spans

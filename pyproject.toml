@@ -44,8 +44,9 @@ testpaths = ["tests/"]
 
 [tool.coverage.run]
 plugins = ["Cython.Coverage"]
+source = ["optical_networking_gym"]
+omit = ["tests/*"]
 
 [tool.coverage.report]
 show_missing = true
 fail_under = 100
-omit = ["tests/*"]
