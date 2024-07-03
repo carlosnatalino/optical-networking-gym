@@ -44,3 +44,8 @@ testpaths = ["tests/"]
 
 [tool.coverage.run]
 plugins = ["Cython.Coverage"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 100
+omit = ["tests/*"]
