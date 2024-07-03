@@ -26,9 +26,11 @@ jobs:
         run: python -c "import sys; print(sys.version)"
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip setuptools Cython
+          python -m pip install --upgrade pip setuptools Cython numpy
       - name: Build
-        run: python setup.py build_ext -i
+        run: |
+          python setup.py build_ext -i
+          pip install -e ".[dev]"
       - name: Run tests and evaluate coverage
         run: |
           coverage run -m pytest

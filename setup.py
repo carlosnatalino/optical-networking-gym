@@ -1,5 +1,5 @@
 from setuptools import setup
-# import numpy as np
+import numpy as np
 from Cython.Build import cythonize
 
 setup(
@@ -10,7 +10,7 @@ setup(
             # "optical_networking_gym/envs/*.pyx",
             "optical_networking_gym/**/*.pyx",
         ],
-        # include_path=[np.get_include()],
+        include_path=[np.get_include()],
         language_level="3",
     ),
 )

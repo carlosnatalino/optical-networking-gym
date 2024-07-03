@@ -18,7 +18,7 @@ source .venv/bin/activate
 Then, installing the necessary build tools:
 
 ```bash
-pip install -U pip setuptools Cython
+pip install -U pip setuptools Cython numpy
 ```
 
 Then, it is time to build the package:
@@ -27,7 +27,19 @@ Then, it is time to build the package:
 python setup.py build_ext -i
 ```
 
+Finally, we need to install the package:
+
+```bash
+pip install -e .
+```
+
 ## Development
+
+To install the development dependencies, after the installation steps above, run:
+
+```bash
+pip install -e ".[dev]"
+```
 
 To build and run tests:
 
