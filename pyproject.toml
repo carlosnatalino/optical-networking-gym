@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools", "setuptools-scm", "Cython"]
+requires = ["setuptools", "setuptools-scm", "Cython", "numpy"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -21,6 +21,7 @@ dependencies = [
     "numpy",
     "matplotlib",
     "networkx",
+    "Cython",
 ]
 
 [project.optional-dependencies]
@@ -34,6 +35,10 @@ dev = [
 research = [
     "matplotlib",
     "jupyterlab",
+]
+
+docs = [
+    "sphinx",
 ]
 
 [tool.setuptools]

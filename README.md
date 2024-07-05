@@ -15,7 +15,19 @@ Then activating it:
 source .venv/bin/activate
 ```
 
-Then, installing the necessary build tools:
+Then, install the project:
+
+```bash
+pip install -e .
+```
+
+Alternatively, you can install with the development and research dependencies:
+
+```bash
+pip install -e ".[dev,research]"
+```
+
+<!-- Then, installing the necessary build tools:
 
 ```bash
 pip install -U pip setuptools Cython numpy
@@ -27,11 +39,8 @@ Then, it is time to build the package:
 python setup.py build_ext -i
 ```
 
-Finally, we need to install the package:
+Finally, we need to install the package: -->
 
-```bash
-pip install -e .
-```
 
 ## Development
 
