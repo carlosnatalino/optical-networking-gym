@@ -45,5 +45,5 @@ def test_link():
             noise_figure=random.random() * 5.5,
         )
         spans.append(s)
-    l = ongt.Link(id=0, node1="t", node2="d", length=total_length, spans=tuple(spans))
-    assert len(l.spans) == 5
+    lnk = ongt.Link(id=0, node1="t", node2="d", length=total_length, spans=tuple(spans))
+    assert len(lnk.spans) == 5

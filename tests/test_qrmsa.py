@@ -1,5 +1,4 @@
 import os
-import pickle
 
 import networkx as nx
 
@@ -7,7 +6,7 @@ from optical_networking_gym.envs.qrmsa import QRMSAEnv
 
 
 def get_topology(name: str) -> nx.Graph:
-    G = nx.Graph()
+    G: nx.Graph = nx.Graph()
 
     # Add nodes (vertices) to the graph
     G.add_node('A')
@@ -34,4 +33,4 @@ def get_topology(name: str) -> nx.Graph:
 
 def test_init():
     topology = get_topology("germany50_gn_5-paths_6-modulations.h5")
-    env = QRMSAEnv(topology=topology, num_spectrum_resources=360)
+    _ = QRMSAEnv(topology=topology, num_spectrum_resources=360)

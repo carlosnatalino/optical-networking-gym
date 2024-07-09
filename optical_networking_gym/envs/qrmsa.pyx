@@ -29,6 +29,8 @@ cdef class QRMSAEnv:
         float channel_width
         # int[:, :] spectrum_use
         # int[:, :] spectrum_allocation
+        readonly object spectrum_use
+        readonly object spectrum_allocation
         readonly object observation_space
         readonly object action_space
         object _np_random
@@ -40,8 +42,6 @@ cdef class QRMSAEnv:
     topology: cython.declare(nx.Graph, visibility="readonly")
     bit_rate_selection: cython.declare(Literal["continuous", "discrete"], visitility="readonly")
     bit_rates: cython.declare(tuple[int | float], visitility="readonly")
-    spectrum_use: cython.declare(np.int32, visitility="readonly")
-    spectrum_allocation: cython.declare(np.int64, visitility="readonly")
 
     def __cinit__(
         self,

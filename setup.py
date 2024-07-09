@@ -5,7 +5,7 @@ from Cython.Build import cythonize
 setup(
     name="optical_networking_gym",
     # install_requires=["gymnasium", "numpy", "matplotlib", "networkx"],
-    ext_modules=[
+    ext_modules=cythonize([
         Extension(
             "optical_networking_gym.utils",
             ["optical_networking_gym/utils.pyx"],
@@ -24,14 +24,6 @@ setup(
             include_dirs=[np.get_include()],
             define_macros=[("NPY_NO_DEPRECATED_API", "NPY_1_7_API_VERSION")],
         ),
-    # cythonize(
-    #     [
-    #         "optical_networking_gym/*.pyx",
-    #     ],
-    #     # include_path=[np.get_include()],
-    #     language_level="3",
-    #     # compiler_directives={"profile": True, "linetrace": True},
-    # ),
-    ],
+    ]),
     include_dirs=[np.get_include()],
 )
