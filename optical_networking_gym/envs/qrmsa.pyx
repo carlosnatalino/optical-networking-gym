@@ -27,8 +27,8 @@ cdef class QRMSAEnv:
         float mean_service_holding_time
         int num_spectrum_resources
         float channel_width
-        cnp.ndarray[:, :] spectrum_use
-        cnp.ndarray[:, :] spectrum_allocation
+        # int[:, :] spectrum_use
+        # int[:, :] spectrum_allocation
         readonly object observation_space
         readonly object action_space
         object _np_random
@@ -37,9 +37,11 @@ cdef class QRMSAEnv:
         float bit_rate_higher_bound
         bint allow_rejection
 
-    topology: cython.declare(nx.Graph, visibility="public")
-    bit_rate_selection: Literal["continuous", "discrete"]
-    bit_rates: tuple[int | float] = (0, 40, 100)
+    topology: cython.declare(nx.Graph, visibility="readonly")
+    bit_rate_selection: cython.declare(Literal["continuous", "discrete"], visitility="readonly")
+    bit_rates: cython.declare(tuple[int | float], visitility="readonly")
+    spectrum_use: cython.declare(np.int32, visitility="readonly")
+    spectrum_allocation: cython.declare(np.int64, visitility="readonly")
 
     def __cinit__(
         self,
@@ -49,10 +51,16 @@ cdef class QRMSAEnv:
     ) -> None:
         self.topology = topology
         self.num_spectrum_resources = num_spectrum_resources
+        self.bit_rates = (0, 40, 100)
         self.spectrum_use = np.full(
             (self.topology.number_of_edges(), self.num_spectrum_resources),
             fill_value=-1,
             dtype=np.int32,
+        )
+        self.spectrum_allocation = np.full(
+            (self.topology.number_of_edges(), self.num_spectrum_resources),
+            fill_value=-1,
+            dtype=np.int64,
         )
     
     def step(self, action: np.ndarray) -> tuple[np.ndarray, SupportsFloat, bool, bool, dict[str, Any]]:
