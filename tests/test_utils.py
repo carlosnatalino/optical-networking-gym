@@ -3,7 +3,7 @@ import random
 import optical_networking_gym.utils as ongu
 import optical_networking_gym.topology as ongt
 
-def test_span_ongu():
+def test_span_ongu() -> None:
     s = ongu.Span(length=80, attenuation=0.2, noise_figure=4.5)
     assert s.attenuation_normalized != 0  # TODO: improve test
     assert s.noise_figure_normalized != 0  # TODO: improve test
@@ -18,7 +18,7 @@ def test_span_ongu():
     except AttributeError:
         pass
 
-def test_span_ongt():
+def test_span_ongt() -> None:
     s = ongt.Span(length=80, attenuation=0.2, noise_figure=4.5)
     assert s.attenuation_normalized != 0  # TODO: improve test
     assert s.noise_figure_normalized != 0  # TODO: improve test
@@ -33,9 +33,9 @@ def test_span_ongt():
     except AttributeError:
         pass
 
-def test_link():
+def test_link() -> None:
     spans = []
-    total_length = 0
+    total_length = 0.0
     for _ in range(5):
         t = random.random() * 80
         total_length += t

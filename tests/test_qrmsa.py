@@ -1,4 +1,4 @@
-import os
+# import os
 
 import networkx as nx
 
@@ -31,6 +31,6 @@ def get_topology(name: str) -> nx.Graph:
 
 # from optical_networking_gym.tests.utils import get_topology
 
-def test_init():
+def test_init() -> None:
     topology = get_topology("germany50_gn_5-paths_6-modulations.h5")
     _ = QRMSAEnv(topology=topology, num_spectrum_resources=360)

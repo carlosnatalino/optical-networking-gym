@@ -5,8 +5,11 @@ import networkx as nx
 import numpy as np
 
 
-def calculate_geographical_distance(latlong1, latlong2) -> float:
-    R = 6373.0
+def calculate_geographical_distance(
+        latlong1: tuple[float, ...],
+        latlong2: tuple[float, ...]
+) -> float:
+    r = 6373.0
 
     lat1 = math.radians(latlong1[0])
     lon1 = math.radians(latlong1[1])
@@ -22,20 +25,20 @@ def calculate_geographical_distance(latlong1, latlong2) -> float:
     )
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
-    length = R * c
+    length = r * c
     return length
 
 
-def read_sndlib_topology(file) -> nx.Graph:
+def read_sndlib_topology(file_name: str) -> nx.Graph:
     graph: nx.Graph = nx.Graph()
 
-    with open(file, encoding="utf-8") as file:
+    with open(file_name, "rt", encoding="utf-8") as file:
         tree = xml.dom.minidom.parse(file)
         document = tree.documentElement
 
-        graph.graph["coordinatesType"] = document.getElementsByTagName("nodes")[
-            0
-        ].getAttribute("coordinatesType")
+        graph.graph["coordinatesType"] = document.getElementsByTagName(
+            "nodes"
+        )[0].getAttribute("coordinatesType")
 
         nodes = document.getElementsByTagName("node")
         for idn, node in enumerate(nodes):
@@ -92,12 +95,11 @@ def read_sndlib_topology(file) -> nx.Graph:
     return graph
 
 
-def read_txt_file(file: str) -> nx.Graph:
+def read_txt_file(file_name: str) -> nx.Graph:
     graph: nx.Graph = nx.Graph()
     num_nodes: int = 0
-    num_links: int = 0
     id_link: int = 0
-    with open(file, "r", encoding="utf-8") as lines:
+    with open(file_name, "r", encoding="utf-8") as lines:
         # gets only lines that do not start with the # character
         nodes_lines = [value for value in lines if not value.startswith("#")]
         for idx, line in enumerate(nodes_lines):
@@ -106,7 +108,7 @@ def read_txt_file(file: str) -> nx.Graph:
                 for _id in range(1, num_nodes + 1):
                     graph.add_node(str(_id), name=str(_id))
             elif idx == 1:
-                num_links = int(line)
+                continue
             elif len(line) > 1:
                 info = line.replace("\n", "").split(" ")
                 graph.add_edge(
