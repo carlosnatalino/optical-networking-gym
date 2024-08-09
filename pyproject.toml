@@ -99,6 +99,7 @@ disallow_subclassing_any = false
 disallow_any_unimported = false
 disallow_any_explicit = true
 disallow_any_generics = true
+exclude = ["setup.py"]
 
 [tool.pytest]
 testpaths = ["tests/"]
