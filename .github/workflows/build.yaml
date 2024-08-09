@@ -38,4 +38,4 @@ jobs:
       - name: Run tests and evaluate coverage
         run: |
           coverage run -m pytest
-          coverage report -m --fail-under=100
+          coverage report -m

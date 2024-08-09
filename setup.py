@@ -29,32 +29,34 @@ else:
 setup(
     name="optical_networking_gym",
     # install_requires=["gymnasium", "numpy", "matplotlib", "networkx"],
-    ext_modules=cythonize([
-        Extension(
-            "optical_networking_gym.utils",
-            ["optical_networking_gym/utils.pyx"],
-            include_dirs=[np.get_include()],
-            define_macros=define_macros,
-            extra_compile_args=extra_compile_args,
-            extra_link_args=extra_link_args,
-        ),
-        Extension(
-            "optical_networking_gym.topology",
-            ["optical_networking_gym/topology.pyx"],
-            include_dirs=[np.get_include()],
-            define_macros=define_macros,
-            extra_compile_args=extra_compile_args,
-            extra_link_args=extra_link_args,
-        ),
-        Extension(
-            "optical_networking_gym.envs.qrmsa",
-            ["optical_networking_gym/envs/qrmsa.pyx"],
-            include_dirs=[np.get_include()],
-            define_macros=define_macros,
-            extra_compile_args=extra_compile_args,
-            extra_link_args=extra_link_args,
-        ),
-    ]),
-    compiler_directives=compiler_directives,
+    ext_modules=cythonize(
+        [
+            Extension(
+                "optical_networking_gym.utils",
+                ["optical_networking_gym/utils.pyx"],
+                include_dirs=[np.get_include()],
+                define_macros=define_macros,
+                extra_compile_args=extra_compile_args,
+                extra_link_args=extra_link_args,
+            ),
+            Extension(
+                "optical_networking_gym.topology",
+                ["optical_networking_gym/topology.pyx"],
+                include_dirs=[np.get_include()],
+                define_macros=define_macros,
+                extra_compile_args=extra_compile_args,
+                extra_link_args=extra_link_args,
+            ),
+            Extension(
+                "optical_networking_gym.envs.qrmsa",
+                ["optical_networking_gym/envs/qrmsa.pyx"],
+                include_dirs=[np.get_include()],
+                define_macros=define_macros,
+                extra_compile_args=extra_compile_args,
+                extra_link_args=extra_link_args,
+            ),
+        ],
+        compiler_directives=compiler_directives,
+    ),
     include_dirs=[np.get_include()],
 )
