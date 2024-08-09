@@ -48,6 +48,14 @@ setup(
                 extra_link_args=extra_link_args,
             ),
             Extension(
+                "optical_networking_gym.envs.rmsa",
+                ["optical_networking_gym/envs/rmsa.pyx"],
+                include_dirs=[np.get_include()],
+                define_macros=define_macros,
+                extra_compile_args=extra_compile_args,
+                extra_link_args=extra_link_args,
+            ),
+            Extension(
                 "optical_networking_gym.envs.qrmsa",
                 ["optical_networking_gym/envs/qrmsa.pyx"],
                 include_dirs=[np.get_include()],
