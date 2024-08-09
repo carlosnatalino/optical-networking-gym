@@ -1,4 +1,3 @@
-# cython: linetrace=True
 import cython
 import numpy as np
 

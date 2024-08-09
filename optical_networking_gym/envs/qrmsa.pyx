@@ -1,8 +1,3 @@
-# cython: boundscheck=False
-# cython: cdivision=True
-# cython: wraparound=False
-# cython: nonecheck=False
-
 from typing import Any, Literal, Sequence, SupportsFloat
 
 cimport cython
