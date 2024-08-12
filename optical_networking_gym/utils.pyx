@@ -1,31 +1,13 @@
 import cython
+cimport numpy as cnp
+cnp.import_array()
 import numpy as np
 
-@cython.cclass
-class Span:
-
-    length = cython.declare(cython.double, visibility='readonly')
-    attenuation_db_km = cython.declare(cython.double, visibility='readonly')
-    attenuation_normalized = cython.declare(cython.double, visibility='readonly')
-    noise_figure_db = cython.declare(cython.double, visibility='readonly')
-    noise_figure_normalized = cython.declare(cython.double, visibility='readonly')
-
-    def __init__(self, length: float, attenuation: float, noise_figure: float):
-        self.length = length
-
-        self.attenuation_db_km = attenuation
-        self.attenuation_normalized = self.attenuation_db_km / (2 * 10 * np.log10(np.exp(1)) * 1e3)  # dB/km ===> 1/m
-
-        self.noise_figure_db = noise_figure
-        self.noise_figure_normalized = 10 ** (self.noise_figure_db / 10)  # dB ===> norm
-    
-    def set_attenuation(self, attenuation: float) -> None:
-        self.attenuation_db_km = attenuation
-        self.attenuation_normalized = self.attenuation_db_km / (2 * 10 * np.log10(np.exp(1)) * 1e3)  # dB/km ===> 1/m
-    
-    def set_noise_figure(self, noise_figure: float) -> None:
-        self.noise_figure_db = noise_figure
-        self.noise_figure_normalized = 10 ** (self.noise_figure_db / 10)  # dB ===> norm
-    
-    def __repr__(self) -> str:
-        return f"Span(length={self.length:.2f}, attenuation_db_km={self.attenuation_db_km}, noise_figure_db={self.noise_figure_db})"
+@cython.wraparound(True)
+def rle(cnp.ndarray[cnp.int32_t, ndim=1] arr):
+    # cnp.int32_t[:, :] spectrum_use):
+    y = np.array(arr[1:] != arr[:-1])  # pairwise unequal (string safe)
+    i = np.append(np.where(y), 1)  # must include last element posi
+    z = np.diff(np.append(-1, i))  # run lengths
+    p = np.cumsum(np.append(0, z))[:-1]  # positions
+    return p, arr[i], z

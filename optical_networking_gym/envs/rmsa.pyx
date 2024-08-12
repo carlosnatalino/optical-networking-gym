@@ -3,11 +3,14 @@ from typing import Any, Literal, Sequence, SupportsFloat
 cimport cython
 cimport numpy as cnp
 cnp.import_array()
+import random
 
 import gymnasium as gym
 from gymnasium.utils import seeding
 import networkx as nx
 import numpy as np
+
+from optical_networking_gym.utils import rle
 
 cdef class RMSAEnv:
     """
@@ -22,10 +25,10 @@ cdef class RMSAEnv:
         float mean_service_holding_time
         int num_spectrum_resources
         float channel_width
-        # int[:, :] spectrum_use
-        # int[:, :] spectrum_allocation
-        readonly object spectrum_use
-        readonly object spectrum_allocation
+        cnp.ndarray _spectrum_use
+        cnp.int32_t[:, :] spectrum_use
+        cnp.ndarray _spectrum_allocation
+        cnp.int64_t[:, :] spectrum_allocation
         readonly object observation_space
         readonly object action_space
         object _np_random
@@ -47,16 +50,23 @@ cdef class RMSAEnv:
         self.topology = topology
         self.num_spectrum_resources = num_spectrum_resources
         self.bit_rates = (0, 40, 100)
-        self.spectrum_use = np.full(
+        self._spectrum_use = np.full(
             (self.topology.number_of_edges(), self.num_spectrum_resources),
             fill_value=-1,
             dtype=np.int32,
         )
-        self.spectrum_allocation = np.full(
+        self.spectrum_use = self._spectrum_use
+        self._spectrum_allocation = np.full(
             (self.topology.number_of_edges(), self.num_spectrum_resources),
             fill_value=-1,
             dtype=np.int64,
         )
+        self.spectrum_allocation = self._spectrum_allocation
+
+        cdef Py_ssize_t row, column
+        row = random.randint(0, self.topology.number_of_edges())
+        column = random.randint(0, self.num_spectrum_resources)
+        self.spectrum_use[row, column] = 0
     
     def step(self, action: np.ndarray) -> tuple[np.ndarray, SupportsFloat, bool, bool, dict[str, Any]]:
         """
