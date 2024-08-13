@@ -12,3 +12,6 @@ import numpy as np
 
 from optical_networking_gym.utils import rle
 
+class RMSAEnv(gym.Env):
+    def __init__(self) -> None: ...
+    def step(self) -> None: ...
