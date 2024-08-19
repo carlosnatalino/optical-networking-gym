@@ -5,17 +5,19 @@ from typing import Optional, Tuple
 
 import networkx as nx
 
-from graph_utils import read_sndlib_topology, read_txt_file
-
 from optical_networking_gym.topology import (
     Span,
     Link,
-    Modulation,
     Path,
+    # get_topology,
     get_k_shortest_paths,
     get_path_weight,
     get_best_modulation_format_by_length,
+    read_sndlib_topology,
+    read_txt_file,
 )
+
+from optical_networking_gym.topology import Modulation
 
 # in case you do not have modulations
 cur_modulations: Optional[Tuple[Modulation]] = None
@@ -48,7 +50,7 @@ cur_modulations: Optional[Tuple[Modulation]] = None
 # )
 
 # other setup:
-cur_modulations = (
+cur_modulations: Tuple[Modulation] = (
     # the first (lowest efficiency) modulation format needs to have maximum length
     # greater or equal to the longest path in the topology.
     # Here we put 100,000 km to be on the safe side

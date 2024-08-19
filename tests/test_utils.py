@@ -57,6 +57,4 @@ def test_rle() -> None:
         y = random.randint(0, 19)
         a[x, y] = 0
     z = np.multiply(a[0, :], a[1, :])
-    for i in random.rang
-    z = np.multiply(a)
     t = ongu.rle(z)
