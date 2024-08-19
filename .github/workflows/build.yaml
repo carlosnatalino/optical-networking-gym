@@ -31,6 +31,8 @@ jobs:
         run: |
           DEBUG=1 python setup.py build_ext -i
           pip install -e ".[dev]"
+      - name: Test topology script
+        run: python examples/create_topology.py --topology examples/topologies/nsfnet_chen.txt -k 5
       - name: Code quality tests
         run: |
           mypy .
