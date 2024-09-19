@@ -40,6 +40,14 @@ setup(
                 extra_link_args=extra_link_args,
             ),
             Extension(
+                "optical_networking_gym.core.osnr",
+                ["optical_networking_gym/core/osnr.pyx"],
+                include_dirs=[np.get_include()],
+                define_macros=define_macros,
+                extra_compile_args=extra_compile_args,
+                extra_link_args=extra_link_args,
+            ),
+            Extension(
                 "optical_networking_gym.topology",
                 ["optical_networking_gym/topology.pyx"],
                 include_dirs=[np.get_include()],
