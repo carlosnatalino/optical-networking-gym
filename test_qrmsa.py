@@ -85,7 +85,6 @@ def test_init() -> None:
     print("Environment initialized successfully")
 
 def test_check_env() -> None:
-    # Ajuste o caminho do arquivo de topologia conforme necessário
     topology = get_topology(
         "examples/topologies/nsfnet_chen.txt",  # Path to the topology file
         "NSFNET",

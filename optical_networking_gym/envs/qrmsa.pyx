@@ -18,6 +18,7 @@ from collections import defaultdict
 from numpy.random import SeedSequence
 from optical_networking_gym.utils import rle
 from optical_networking_gym.core.osnr import calculate_osnr
+from optical_networking_gym.topology import Service, Path, Modulation, Span
 import math
 
 
@@ -390,16 +391,16 @@ cdef class QRMSAEnv:
 
     cpdef tuple[object, float, bint, bint, dict] step(self, cnp.ndarray action):
         cdef int route
-        cdef Modulation modulation
+        cdef object modulation
         cdef int modulation_index
         cdef int initial_slot
         cdef int number_slots
         cdef double osnr, ase, nli
         cdef int disrupted_services = 0
-        cdef Path path
+        cdef object path
         cdef list services_to_measure = []
-        cdef Link link
-        cdef Service service
+        cdef object link
+        cdef object service
         cdef dict info
         cdef str line
         cdef str key
@@ -418,6 +419,11 @@ cdef class QRMSAEnv:
             modulation = self.modulations[modulation_index]
 
             # Get the path based on the route index
+            print("-"*60)
+            print(self.current_service.source)
+            print("*"*60)
+            print(self.current_service.destination)
+            print("+"*60)
             path = self.k_shortest_paths[
                 self.current_service.source,
                 self.current_service.destination,
@@ -599,9 +605,9 @@ cdef class QRMSAEnv:
         cdef float ht
         cdef str src, dst,  dst_id
         cdef float bit_rate
-        cdef Service service
+        cdef object service
         cdef int time, src_id
-        cdef Service service_to_release
+        cdef object service_to_release
         cdef float lambd
 
         if self._new_service:
@@ -724,7 +730,7 @@ cdef class QRMSAEnv:
 
             return cur_spectrum_compactness
 
-    cpdef int get_number_slots(self, Service service, Modulation modulation):
+    cpdef int get_number_slots(self, object service, object modulation):
             """
             Computes the number of spectrum slots necessary to accommodate the service request into the path.
             Adds the guardband.
