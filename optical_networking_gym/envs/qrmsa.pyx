@@ -18,8 +18,84 @@ from collections import defaultdict
 from numpy.random import SeedSequence
 from optical_networking_gym.utils import rle
 from optical_networking_gym.core.osnr import calculate_osnr
-from optical_networking_gym.topology import Service, Path, Modulation, Span
 import math
+import typing
+if typing.TYPE_CHECKING:
+    from optical_networking_gym.topology import Link, Span, Modulation, Path
+
+
+
+
+
+cdef class Service:
+    cdef public int service_id
+    cdef public str source
+    cdef public int source_id
+    cdef public object destination  
+    cdef public object destination_id 
+    cdef public float arrival_time
+    cdef public float holding_time
+    cdef public float bit_rate
+    cdef public object path 
+    cdef public int service_class
+    cdef public int initial_slot
+    cdef public double center_frequency
+    cdef public double bandwidth
+    cdef public int number_slots
+    cdef public int core
+    cdef public float launch_power
+    cdef public bint accepted
+    cdef public bint blocked_due_to_resources
+    cdef public bint blocked_due_to_osnr
+    cdef public double OSNR
+    cdef public double ASE
+    cdef public double NLI
+    cdef public object current_modulation
+    cdef public bint recalculate  
+
+    def __init__(self, int service_id, str source, int source_id, str destination=None,
+                 str destination_id=None, float arrival_time=0.0, float holding_time=0.0,
+                 float bit_rate=0.0, object path=None, int service_class=0,
+                 int initial_slot=0, int center_frequency=0, int bandwidth=0,
+                 int number_slots=0, int core=0, float launch_power=0.0,
+                 bint accepted=False, bint blocked_due_to_resources=True, bint blocked_due_to_osnr=True,
+                 float OSNR=0.0, float ASE=0.0, float NLI=0.0, object current_modulation=None):
+
+        self.service_id = service_id
+        self.source = source
+        self.source_id = source_id
+        self.destination = destination
+        self.destination_id = destination_id
+        self.arrival_time = arrival_time
+        self.holding_time = holding_time
+        self.bit_rate = bit_rate
+        self.path = path
+        self.service_class = service_class
+        self.initial_slot = initial_slot
+        self.center_frequency = center_frequency
+        self.bandwidth = bandwidth
+        self.number_slots = number_slots
+        self.core = core
+        self.launch_power = launch_power
+        self.accepted = accepted
+        self.blocked_due_to_resources = blocked_due_to_resources
+        self.blocked_due_to_osnr = blocked_due_to_osnr
+        self.OSNR = OSNR
+        self.ASE = ASE
+        self.NLI = NLI
+        self.current_modulation = current_modulation
+        self.recalculate = False
+    
+    def __repr__(self):
+        return (f"Service(service_id={self.service_id}, source='{self.source}', source_id={self.source_id}, "
+                f"destination='{self.destination}', destination_id={self.destination_id}, arrival_time={self.arrival_time}, "
+                f"holding_time={self.holding_time}, bit_rate={self.bit_rate}, path={self.path}, service_class={self.service_class}, "
+                f"initial_slot={self.initial_slot}, center_frequency={self.center_frequency}, bandwidth={self.bandwidth}, "
+                f"number_slots={self.number_slots}, core={self.core}, launch_power={self.launch_power}, accepted={self.accepted}, "
+                f"blocked_due_to_resources={self.blocked_due_to_resources}, blocked_due_to_osnr={self.blocked_due_to_osnr}, "
+                f"OSNR={self.OSNR}, ASE={self.ASE}, NLI={self.NLI}, current_modulation={self.current_modulation}, "
+                f"recalculate={self.recalculate})")
+
 
 
 cdef class QRMSAEnv:
@@ -57,7 +133,7 @@ cdef class QRMSAEnv:
         object spectrum_use
         object spectrum_allocation
 
-        object current_service
+        public Service current_service
         int service_id_counter
         list services_in_progress
         list release_times
@@ -105,6 +181,7 @@ cdef class QRMSAEnv:
         object rng
         object bit_rate_function
         list _events
+        str file_stats
 
     topology: cython.declare(nx.Graph, visibility="readonly")
     bit_rate_selection: cython.declare(Literal["continuous", "discrete"], visibility="readonly")
@@ -133,7 +210,8 @@ cdef class QRMSAEnv:
         allow_rejection: bool = False,
         reset: bool = True,
         channel_width: float = 12.5,
-        k_paths: int = 5
+        k_paths: int = 5,
+        file_name: str = ""
     ):
         # Atributos de inicialização
         self.rng = random.Random()
@@ -300,6 +378,13 @@ cdef class QRMSAEnv:
         self.actions_taken = np.zeros(
             (self.k_paths + 1, self.num_spectrum_resources + 1), dtype=np.int64
         )
+        if file_name != "":
+            final_name = "_".join([file_name, str(self.topology.graph["name"]), str(self.launch_power_dbm), str(self.load), str(seed) + ".csv"])
+            self.file_stats = open(final_name, "wt", encoding="UTF-8")
+            self.file_stats.write("# Service stats file from simulator\n")
+            self.file_stats.write("id,source,destination,bit_rate,path_k,path_length,modulation,min_osnr,osnr,ase,nli,disrupted_services\n")
+        else:
+            self.file_stats = None
 
         if reset:
             self.reset()
@@ -381,13 +466,20 @@ cdef class QRMSAEnv:
         available_slots = self.topology.graph["available_slots"]
         running_services = self.topology.graph["running_services"]
         
+        # Create a padded array to store service IDs
         padded_running_services = np.full((1000,), fill_value=-1, dtype=int)
-        padded_running_services[:len(running_services)] = running_services[:1000]
+        
+        # Extract the service_id from each Service object and store it in the array
+        service_ids = [service.service_id for service in running_services[:1000]]
+        
+        # Store the service IDs in the padded array
+        padded_running_services[:len(service_ids)] = service_ids
 
         return {
             "topology": available_slots,
             "running-services": padded_running_services
         }
+
 
     cpdef tuple[object, float, bint, bint, dict] step(self, cnp.ndarray action):
         cdef int route
@@ -419,11 +511,6 @@ cdef class QRMSAEnv:
             modulation = self.modulations[modulation_index]
 
             # Get the path based on the route index
-            print("-"*60)
-            print(self.current_service.source)
-            print("*"*60)
-            print(self.current_service.destination)
-            print("+"*60)
             path = self.k_shortest_paths[
                 self.current_service.source,
                 self.current_service.destination,
@@ -454,7 +541,6 @@ cdef class QRMSAEnv:
                     self.current_service.OSNR = osnr
                     self.current_service.ASE = ase
                     self.current_service.NLI = nli
-
                     if self.current_service.service_id > self.episode_length:
                         self.max_gsnr = max(self.max_gsnr, osnr)
                         self.min_gsnr = min(self.min_gsnr, osnr)
@@ -506,11 +592,11 @@ cdef class QRMSAEnv:
         if not self.current_service.accepted:
             self.actions_taken[self.k_paths, self.num_spectrum_resources] += 1
             self.current_service.path = None
-            self.current_service.initial_slot = None
-            self.current_service.number_slots = None
-            self.current_service.OSNR = None
-            self.current_service.ASE = None
-            self.current_service.NLI = None
+            self.current_service.initial_slot = -1
+            self.current_service.number_slots = 0
+            self.current_service.OSNR = 0.0
+            self.current_service.ASE = 0.0
+            self.current_service.NLI = 0.0
 
         # Append the current service to the services list
         self.topology.graph["services"].append(self.current_service)
@@ -589,6 +675,9 @@ cdef class QRMSAEnv:
             self._new_service = False
             self._next_service()
             terminated = self.episode_services_processed == self.episode_length
+            print(self.current_service.__repr__())
+            print(self.topology.graph['available_slots'])
+            print(info)
             return (
                 self.observation(),
                 reward,
@@ -619,7 +708,6 @@ cdef class QRMSAEnv:
         ht = self.rng.expovariate(1.0 / self.mean_service_holding_time)
 
         src, src_id, dst, dst_id = self._get_node_pair()
-
         if self.bit_rate_selection == "continuous":
             bit_rate = self.bit_rate_function()
         else:
@@ -738,6 +826,250 @@ cdef class QRMSAEnv:
             cdef double required_slots
             required_slots = service.bit_rate / (modulation.spectral_efficiency * self.channel_width)
             return int(math.ceil(required_slots))
+
+
+    cpdef bint is_path_free(self, object path, int initial_slot, int number_slots):
+        cdef int start, end, i, num_nodes, link_index
+        cdef int num_spectrum_resources = self.num_spectrum_resources
+        cdef cnp.ndarray[cnp.int32_t, ndim=2] available_slots_np = self.topology.graph["available_slots"]
+        cdef cnp.int32_t[:, :] available_slots = available_slots_np  # Typed memoryview
+        cdef cnp.int32_t[:] slots
+        cdef Py_ssize_t slot_idx, num_slots
+
+        if initial_slot + number_slots > num_spectrum_resources:
+            return False
+
+        # Considerando a guard band
+        if initial_slot > 0:
+            start = initial_slot - 1
+        else:
+            start = 0
+
+        end = initial_slot + number_slots + 1
+        if end == num_spectrum_resources:
+            end -= 1
+        cdef tuple node_list = path.get_node_list()
+        num_nodes = len(node_list)
+        for i in range(num_nodes - 1):
+            # Obtendo o índice do link
+            link_data = self.topology[node_list[i]][node_list[i + 1]]
+            link_index = link_data["index"]
+
+            # Obtendo os slots como um memoryview para melhorar a performance
+            slots = available_slots[link_index, start:end]
+            num_slots = slots.shape[0]
+
+            # Verificando se algum slot está ocupado (igual a 0)
+            for slot_idx in range(num_slots):
+                if slots[slot_idx] == 0:
+                    return False
+
+        return True
+
+    cpdef double reward(self):
+        cdef double osnr, min_osnr, osnr_diff, numerator, log_value, reward_value
+        cdef bint accepted
+
+        accepted = self.current_service.accepted
+        if not accepted:
+            return 0.0
+
+        osnr = self.current_service.OSNR
+        min_osnr = self.current_service.current_modulation.minimum_osnr
+
+        osnr_diff = osnr - min_osnr
+        numerator = 1.0 + osnr_diff
+        log_value = log10(numerator)
+        reward_value = 1.0 - log_value / 1.6
+
+        return reward_value
+    
+    cpdef _provision_path(self, object path, cnp.int64_t initial_slot, int number_slots):
+        cdef int i, path_length, link_index
+        cdef int start_slot = <int>initial_slot
+        cdef int end_slot = start_slot + number_slots
+        cdef tuple node_list = path.get_node_list() 
+        cdef object link  # Replace with appropriate type if possible
+
+        # Check if the path is free
+        if not self.is_path_free(path, initial_slot, number_slots):
+            available_slots = self.get_available_slots(path)
+            raise ValueError(
+                f"Path {node_list} has not enough capacity on slots {start_slot}-{end_slot} / "
+                f"needed: {number_slots} / available: {available_slots}"
+            )
+
+        print(
+            f"{self.current_service.service_id} assigning path {node_list} on initial slot {start_slot} for {number_slots} slots"
+        )
+
+        # Provision the path
+        path_length = len(node_list)
+        for i in range(path_length - 1):
+            # Get the link index
+            link_index = self.topology[node_list[i]][node_list[i + 1]]["index"]
+
+            # Update available slots
+            self.topology.graph["available_slots"][
+                link_index,
+                start_slot:end_slot
+            ] = 0
+
+            # Update spectrum slots allocation
+            self.spectrum_slots_allocation[
+                link_index,
+                start_slot:end_slot
+            ] = self.current_service.service_id
+
+            # Append the current service to the link's services
+            self.topology[node_list[i]][node_list[i + 1]]["services"].append(self.current_service)
+            self.topology[node_list[i]][node_list[i + 1]]["running_services"].append(self.current_service)
+
+        # Update running services in the topology
+        self.topology.graph["running_services"].append(self.current_service)
+
+        self.current_service.path = path
+        self.current_service.initial_slot = initial_slot
+        self.current_service.number_slots = number_slots
+        self.current_service.center_frequency = self.frequency_start + (
+            self.frequency_slot_bandwidth * initial_slot
+        ) + (
+            self.frequency_slot_bandwidth * (number_slots / 2)
+        )
+        self.current_service.bandwidth = self.frequency_slot_bandwidth * number_slots
+
+        self.services_accepted += 1
+        self.episode_services_accepted += 1
+        self.bit_rate_provisioned += self.current_service.bit_rate
+        self.episode_bit_rate_provisioned = <cnp.int64_t>(
+            self.episode_bit_rate_provisioned + self.current_service.bit_rate
+        )
+
+        if self.bit_rate_selection == "discrete":
+            self.slots_provisioned_histogram[self.current_service.number_slots] += 1
+            self.bit_rate_provisioned_histogram[self.current_service.bit_rate] += 1
+            self.episode_bit_rate_provisioned_histogram[self.current_service.bit_rate] += 1
+
+    cpdef void _add_release(self, Service service):
+        """
+        Adds an event to the event list of the simulator.
+        This implementation uses heapq to maintain a min-heap of events.
+
+        :param service: The service that will be released after its holding time.
+        :return: None
+        """
+        cdef double release_time
+        release_time = service.arrival_time + service.holding_time
+        heapq.heappush(self._events, (release_time, service))
+    
+    cpdef _release_path(self, Service service):
+        cdef int i, link_index
+        cdef int initial_slot = service.initial_slot
+        cdef int number_slots = service.number_slots
+        cdef tuple node_list = service.path.node_list  # Assuming node_list is a tuple or list
+
+        # Iterate over each link in the service's path (node_list)
+        for i in range(len(node_list) - 1):
+            # Get the index of the link between node i and node i+1
+            link_index = self.topology[node_list[i]][node_list[i + 1]]["index"]
+
+            # Free the spectrum slots that were allocated to this service
+            self.topology.graph["available_slots"][
+                link_index,
+                initial_slot : initial_slot + number_slots
+            ] = 1
+
+            # Mark the spectrum slots as unallocated (-1)
+            self.spectrum_slots_allocation[
+                link_index,
+                initial_slot : initial_slot + number_slots
+            ] = -1
+
+            # Remove the service from the running services on this link
+            self.topology[node_list[i]][node_list[i + 1]]["running_services"].remove(service)
+
+            # Update link statistics after releasing the service
+            self._update_link_stats(node_list[i], node_list[i + 1])
+
+        # Remove the service from the global list of running services
+        self.topology.graph["running_services"].remove(service)
+    
+    cpdef _update_link_stats(self, str node1, str node2):
+        cdef double last_update, time_diff, last_util, cur_util, utilization
+        cdef double cur_external_fragmentation, cur_link_compactness
+        cdef double external_fragmentation, link_compactness
+        cdef int used_spectrum_slots, max_empty, lambda_min, lambda_max
+        cdef object link  # Assuming this is a dict-like object
+        cdef cnp.ndarray[cnp.int32_t, ndim=1] slot_allocation  # Typed NumPy array
+        cdef list initial_indices, values, lengths, unused_blocks, used_blocks
+        cdef double last_external_fragmentation, last_compactness
+
+        # Get the link between node1 and node2
+        link = self.topology[node1][node2]
+        last_update = link["last_update"]
+        time_diff = self.current_time - last_update
+
+        if self.current_time > 0:
+            last_util = link["utilization"]
+            slot_allocation = self.topology.graph["available_slots"][link["index"], :]
+
+            # Ensure slot_allocation is a Cython-compatible NumPy array of int32
+            slot_allocation = <cnp.ndarray[cnp.int32_t, ndim=1]> np.asarray(slot_allocation, dtype=np.int32)
+
+            # Calculate current utilization
+            used_spectrum_slots = self.num_spectrum_resources - np.sum(slot_allocation)
+            cur_util = used_spectrum_slots / self.num_spectrum_resources
+
+            # Update utilization using a weighted average
+            utilization = ((last_util * last_update) + (cur_util * time_diff)) / self.current_time
+            link["utilization"] = utilization
+
+            # Call rle with Cython-compatible NumPy array and convert results to lists
+            initial_indices_np, values_np, lengths_np = rle(slot_allocation)
+            
+            initial_indices = initial_indices_np.tolist()  # Convert NumPy arrays to lists
+            values = values_np.tolist()
+            lengths = lengths_np.tolist()
+
+            # Compute external fragmentation
+            unused_blocks = [i for i, x in enumerate(values) if x == 1]
+
+            # Fix: Get the corresponding values from lengths using list comprehension
+            if len(unused_blocks) > 1 and unused_blocks != [0, len(values) - 1]:
+                max_empty = max([lengths[i] for i in unused_blocks])
+            else:
+                max_empty = 0
+
+            cur_external_fragmentation = 1.0 - (float(max_empty) / float(np.sum(slot_allocation)))
+
+            # Compute link spectrum compactness
+            used_blocks = [i for i, x in enumerate(values) if x == 0]
+            if len(used_blocks) > 1:
+                lambda_min = initial_indices[used_blocks[0]]
+                lambda_max = initial_indices[used_blocks[-1]] + lengths[used_blocks[-1]]
+
+                # Evaluate the used part of the spectrum
+                internal_idx_np, internal_values_np, internal_lengths_np = rle(slot_allocation[lambda_min:lambda_max])
+                internal_values = internal_values_np.tolist()  # Convert to lists
+                unused_spectrum_slots = np.sum(1 - internal_values_np)
+
+                if unused_spectrum_slots > 0:
+                    cur_link_compactness = ((lambda_max - lambda_min) / np.sum(1 - slot_allocation)) * (1 / unused_spectrum_slots)
+                else:
+                    cur_link_compactness = 1.0
+            else:
+                cur_link_compactness = 1.0
+
+            # Update external fragmentation using a weighted average
+            external_fragmentation = ((last_external_fragmentation * last_update) + (cur_external_fragmentation * time_diff)) / self.current_time
+            link["external_fragmentation"] = external_fragmentation
+
+            # Update link compactness using a weighted average
+            link_compactness = ((last_compactness * last_update) + (cur_link_compactness * time_diff)) / self.current_time
+            link["compactness"] = link_compactness
+
+        # Update the last update time
+        link["last_update"] = self.current_time
 
     def close(self):
         return super().close()
