@@ -4,7 +4,11 @@ from gymnasium.utils import seeding
 from optical_networking_gym.envs.qrmsa import QRMSAEnv
 
 class QRMSAEnvWrapper(gym.Env):
+    
+    metadata = {'render.modes': ['human']}
+
     def __init__(self, *args, **kwargs):
+        super(QRMSAEnvWrapper, self).__init__()
         self.env = QRMSAEnv(*args, **kwargs)
         self.action_space = self.env.action_space
         self.observation_space = self.env.observation_space

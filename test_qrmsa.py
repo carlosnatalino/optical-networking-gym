@@ -128,11 +128,10 @@ def check_step():
         5,  # Number of paths per node pair
     )
 
-    # Initialize the environment
     env = QRMSAEnvWrapper(
         topology=topology,
         num_spectrum_resources=320,
-        episode_length=1000,
+        episode_length=10000,
         load=10.0,
         mean_service_holding_time=10800.0,
         bit_rate_selection="continuous",
@@ -148,26 +147,24 @@ def check_step():
         k_paths=5,
     )
 
-    # Reset the environment and get the initial observation
     observation = env.reset()
 
-    # Run 100 steps
-    for step in range(100):
-        # Sample a random action or choose based on some policy
-        action = env.action_space.sample()
+    for step in range(1000):
+        try:
+            action = env.action_space.sample()
+            print(f"Step {step + 1}, Action: {action}")
+            observation, reward, terminated, truncated, info = env.step(action)
+            print(f"Step {step + 1}: Reward = {reward}, Terminated = {terminated}, Truncated = {truncated}")
+        except Exception as e:
+            print(f"An exception occurred at step {step + 1}: {e}")
+            break
 
-        # Take the step in the environment and collect the result
-        observation, reward, terminated, truncated, info = env.step(action)
-
-        # Print or log the step's result (optional)
-        print(f"Step {step + 1}: Reward = {reward}, Terminated = {terminated}, Truncated = {truncated}")
-
-        # Check if the episode is over
         if terminated or truncated:
             print(f"Environment finished at step {step + 1}. Resetting...")
             observation = env.reset()
 
-    print("Completed 100 steps.")
+    print("Completed 10000 steps.")
+
 
 
 

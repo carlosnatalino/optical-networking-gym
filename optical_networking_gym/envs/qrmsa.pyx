@@ -23,20 +23,16 @@ import typing
 if typing.TYPE_CHECKING:
     from optical_networking_gym.topology import Link, Span, Modulation, Path
 
-
-
-
-
 cdef class Service:
     cdef public int service_id
     cdef public str source
     cdef public int source_id
-    cdef public object destination  
-    cdef public object destination_id 
+    cdef public object destination
+    cdef public object destination_id
     cdef public float arrival_time
     cdef public float holding_time
     cdef public float bit_rate
-    cdef public object path 
+    cdef public object path
     cdef public int service_class
     cdef public int initial_slot
     cdef public double center_frequency
@@ -51,16 +47,34 @@ cdef class Service:
     cdef public double ASE
     cdef public double NLI
     cdef public object current_modulation
-    cdef public bint recalculate  
+    cdef public bint recalculate
 
-    def __init__(self, int service_id, str source, int source_id, str destination=None,
-                 str destination_id=None, float arrival_time=0.0, float holding_time=0.0,
-                 float bit_rate=0.0, object path=None, int service_class=0,
-                 int initial_slot=0, int center_frequency=0, int bandwidth=0,
-                 int number_slots=0, int core=0, float launch_power=0.0,
-                 bint accepted=False, bint blocked_due_to_resources=True, bint blocked_due_to_osnr=True,
-                 float OSNR=0.0, float ASE=0.0, float NLI=0.0, object current_modulation=None):
-
+    def __init__(
+        self,
+        int service_id,
+        str source,
+        int source_id,
+        str destination = None,
+        str destination_id = None,
+        float arrival_time = 0.0,
+        float holding_time = 0.0,
+        float bit_rate = 0.0,
+        object path = None,
+        int service_class = 0,
+        int initial_slot = 0,
+        int center_frequency = 0,
+        int bandwidth = 0,
+        int number_slots = 0,
+        int core = 0,
+        float launch_power = 0.0,
+        bint accepted = False,
+        bint blocked_due_to_resources = True,
+        bint blocked_due_to_osnr = True,
+        float OSNR = 0.0,
+        float ASE = 0.0,
+        float NLI = 0.0,
+        object current_modulation = None
+    ):
         self.service_id = service_id
         self.source = source
         self.source_id = source_id
@@ -85,103 +99,87 @@ cdef class Service:
         self.NLI = NLI
         self.current_modulation = current_modulation
         self.recalculate = False
-    
+
     def __repr__(self):
-        return (f"Service(service_id={self.service_id}, source='{self.source}', source_id={self.source_id}, "
-                f"destination='{self.destination}', destination_id={self.destination_id}, arrival_time={self.arrival_time}, "
-                f"holding_time={self.holding_time}, bit_rate={self.bit_rate}, path={self.path}, service_class={self.service_class}, "
-                f"initial_slot={self.initial_slot}, center_frequency={self.center_frequency}, bandwidth={self.bandwidth}, "
-                f"number_slots={self.number_slots}, core={self.core}, launch_power={self.launch_power}, accepted={self.accepted}, "
-                f"blocked_due_to_resources={self.blocked_due_to_resources}, blocked_due_to_osnr={self.blocked_due_to_osnr}, "
-                f"OSNR={self.OSNR}, ASE={self.ASE}, NLI={self.NLI}, current_modulation={self.current_modulation}, "
-                f"recalculate={self.recalculate})")
-
-
+        return (
+            f"Service(service_id={self.service_id}, source='{self.source}', source_id={self.source_id}, "
+            f"destination='{self.destination}', destination_id={self.destination_id}, arrival_time={self.arrival_time}, "
+            f"holding_time={self.holding_time}, bit_rate={self.bit_rate}, path={self.path}, service_class={self.service_class}, "
+            f"initial_slot={self.initial_slot}, center_frequency={self.center_frequency}, bandwidth={self.bandwidth}, "
+            f"number_slots={self.number_slots}, core={self.core}, launch_power={self.launch_power}, accepted={self.accepted}, "
+            f"blocked_due_to_resources={self.blocked_due_to_resources}, blocked_due_to_osnr={self.blocked_due_to_osnr}, "
+            f"OSNR={self.OSNR}, ASE={self.ASE}, NLI={self.NLI}, current_modulation={self.current_modulation}, "
+            f"recalculate={self.recalculate})"
+        )
 
 cdef class QRMSAEnv:
     cdef public uint32_t input_seed
-    cdef:
-        float load
-        int episode_length
-        float mean_service_holding_time
-        int num_spectrum_resources
-        float channel_width
-        bint allow_rejection
-        readonly object topology
-        readonly str bit_rate_selection
-        readonly tuple bit_rates
-        float bit_rate_lower_bound
-        float bit_rate_higher_bound
-        object bit_rate_probabilities
-        object node_request_probabilities
-        object k_shortest_paths
-        int k_paths
-
-        float launch_power_dbm
-        float launch_power
-        float bandwidth
-        float frequency_start
-        float frequency_end
-        float frequency_slot_bandwidth
-        float margin
-        object modulations
-        bint measure_disruptions
-
-        public object _np_random
-        public int _np_random_seed
-
-        object spectrum_use
-        object spectrum_allocation
-
-        public Service current_service
-        int service_id_counter
-        list services_in_progress
-        list release_times
-    
-
-        int services_processed
-        int services_accepted
-        int episode_services_processed
-        int episode_services_accepted
-        float bit_rate_requested
-        float bit_rate_provisioned
-        float episode_bit_rate_requested
-        float episode_bit_rate_provisioned
-        object bit_rate_requested_histogram
-        object bit_rate_provisioned_histogram
-        object slots_provisioned_histogram
-        object episode_slots_provisioned_histogram
-
-        int disrupted_services
-        int episode_disrupted_services
-        list disrupted_services_list
-
-        public object action_space
-        public object observation_space
-
-        object episode_actions_output
-        object episode_actions_taken
-        object episode_modulation_histogram
-        object episode_bit_rate_requested_histogram
-        object episode_bit_rate_provisioned_histogram
-        object spectrum_slots_allocation
-
-
-
-        int reject_action
-        object actions_output
-        object actions_taken
-
-        bint _new_service
-        float current_time
-        float mean_service_inter_arrival_time
-
-        public object frequency_vector
-
-        object rng
-        object bit_rate_function
-        list _events
-        str file_stats
+    cdef float load
+    cdef int episode_length
+    cdef float mean_service_holding_time
+    cdef int num_spectrum_resources
+    cdef float channel_width
+    cdef bint allow_rejection
+    cdef readonly object topology
+    cdef readonly str bit_rate_selection
+    cdef readonly tuple bit_rates
+    cdef float bit_rate_lower_bound
+    cdef float bit_rate_higher_bound
+    cdef object bit_rate_probabilities
+    cdef object node_request_probabilities
+    cdef object k_shortest_paths
+    cdef int k_paths
+    cdef float launch_power_dbm
+    cdef float launch_power
+    cdef float bandwidth
+    cdef float frequency_start
+    cdef float frequency_end
+    cdef float frequency_slot_bandwidth
+    cdef float margin
+    cdef object modulations
+    cdef bint measure_disruptions
+    cdef public object _np_random
+    cdef public int _np_random_seed
+    cdef object spectrum_use
+    cdef object spectrum_allocation
+    cdef public Service current_service
+    cdef int service_id_counter
+    cdef list services_in_progress
+    cdef list release_times
+    cdef int services_processed
+    cdef int services_accepted
+    cdef int episode_services_processed
+    cdef int episode_services_accepted
+    cdef float bit_rate_requested
+    cdef float bit_rate_provisioned
+    cdef float episode_bit_rate_requested
+    cdef float episode_bit_rate_provisioned
+    cdef object bit_rate_requested_histogram
+    cdef object bit_rate_provisioned_histogram
+    cdef object slots_provisioned_histogram
+    cdef object episode_slots_provisioned_histogram
+    cdef int disrupted_services
+    cdef int episode_disrupted_services
+    cdef list disrupted_services_list
+    cdef public object action_space
+    cdef public object observation_space
+    cdef object episode_actions_output
+    cdef object episode_actions_taken
+    cdef object episode_modulation_histogram
+    cdef object episode_bit_rate_requested_histogram
+    cdef object episode_bit_rate_provisioned_histogram
+    cdef object spectrum_slots_allocation
+    cdef int reject_action
+    cdef object actions_output
+    cdef object actions_taken
+    cdef bint _new_service
+    cdef float current_time
+    cdef float mean_service_inter_arrival_time
+    cdef public object frequency_vector
+    cdef object rng
+    cdef object bit_rate_function
+    cdef list _events
+    cdef str file_stats
 
     topology: cython.declare(nx.Graph, visibility="readonly")
     bit_rate_selection: cython.declare(Literal["continuous", "discrete"], visibility="readonly")
@@ -196,8 +194,8 @@ cdef class QRMSAEnv:
         mean_service_holding_time: float = 10800.0,
         bit_rate_selection: str = "continuous",
         bit_rates: tuple = (10, 40, 100),
-        bit_rate_probabilities=None,
-        node_request_probabilities=None,
+        bit_rate_probabilities = None,
+        node_request_probabilities = None,
         bit_rate_lower_bound: float = 25.0,
         bit_rate_higher_bound: float = 100.0,
         launch_power_dbm: float = 0.0,
@@ -213,41 +211,32 @@ cdef class QRMSAEnv:
         k_paths: int = 5,
         file_name: str = ""
     ):
-        # Atributos de inicialização
         self.rng = random.Random()
         self._events = []
         self.mean_service_inter_arrival_time = 0
         self.set_load(load=load, mean_service_holding_time=mean_service_holding_time)
-
         self.bit_rate_selection = bit_rate_selection
-        
+
         if self.bit_rate_selection == "continuous":
             self.bit_rate_lower_bound = bit_rate_lower_bound
             self.bit_rate_higher_bound = bit_rate_higher_bound
-
-            # creating a partial function for the bit rate continuous selection
             self.bit_rate_function = functools.partial(
-                self.rng.randint, int(self.bit_rate_lower_bound), int(self.bit_rate_higher_bound)
+                self.rng.randint,
+                int(self.bit_rate_lower_bound),
+                int(self.bit_rate_higher_bound)
             )
-        
         elif self.bit_rate_selection == "discrete":
             if bit_rate_probabilities is None:
                 bit_rate_probabilities = [1.0 / len(bit_rates) for _ in range(len(bit_rates))]
-            
             self.bit_rate_probabilities = bit_rate_probabilities
             self.bit_rates = bit_rates
-
-            # creating a partial function for the discrete bit rate options
             self.bit_rate_function = functools.partial(
                 self.rng.choices, self.bit_rates, self.bit_rate_probabilities, k=1
             )
-
-            # defining histograms which are only used for the discrete bit rate selection
             self.bit_rate_requested_histogram = defaultdict(int)
             self.bit_rate_provisioned_histogram = defaultdict(int)
             self.episode_bit_rate_requested_histogram = defaultdict(int)
             self.episode_bit_rate_provisioned_histogram = defaultdict(int)
-        
         self.topology = topology
         self.num_spectrum_resources = num_spectrum_resources
         self.episode_length = episode_length
@@ -257,64 +246,55 @@ cdef class QRMSAEnv:
         self.allow_rejection = allow_rejection
         self.k_paths = k_paths
         self.k_shortest_paths = self.topology.graph["ksp"]
-
-
         if node_request_probabilities is not None:
             self.node_request_probabilities = node_request_probabilities
         else:
             tmp_probabilities = np.full(
                 (self.topology.number_of_nodes(),),
                 fill_value=1.0 / self.topology.number_of_nodes(),
-                dtype=np.float64  
+                dtype=np.float64
             )
             self.node_request_probabilities = np.asarray(tmp_probabilities, dtype=np.float64)
-
-        # Cálculo da potência de lançamento
         self.launch_power_dbm = launch_power_dbm
-        self.launch_power = 10 ** ((self.launch_power_dbm - 30) / 10)  # Convertendo dBm para watts
-
-        # Parâmetros relacionados à frequência
+        self.launch_power = 10 ** ((self.launch_power_dbm - 30) / 10)
         self.bandwidth = bandwidth
         self.frequency_start = frequency_start
         self.frequency_slot_bandwidth = frequency_slot_bandwidth
         self.margin = margin
         self.measure_disruptions = measure_disruptions
-
         self.frequency_end = self.frequency_start + self.frequency_slot_bandwidth * self.num_spectrum_resources
-
         assert math.isclose(self.frequency_end - self.frequency_start, self.bandwidth, rel_tol=1e-5)
-
         self.frequency_vector = np.linspace(
             self.frequency_start,
             self.frequency_end,
             num=self.num_spectrum_resources,
             dtype=np.float64
         )
-        
         assert self.frequency_vector.shape[0] == self.num_spectrum_resources, (
-            f"Tamanho do frequency_vector ({self.frequency_vector.shape[0]}) "
-            f"não é igual a num_spectrum_resources ({self.num_spectrum_resources})."
+            f"Size of frequency_vector ({self.frequency_vector.shape[0]}) "
+            f"does not match num_spectrum_resources ({self.num_spectrum_resources})."
         )
-
         self.topology.graph["available_slots"] = np.ones(
-                                                    (self.topology.number_of_edges(), self.num_spectrum_resources),
-                                                    dtype=np.int32
-                                                )
-        self.observation_space = gym.spaces.Dict({"topology": gym.spaces.Box(low=-1, high=1, dtype=int,
-                                                    shape=self.topology.graph["available_slots"].shape),
-                                                    "running-services":gym.spaces.Box(low=-1, high=np.inf, dtype=int,
-                                                    shape=(1000, ))}
-                                                    )
-
+            (self.topology.number_of_edges(), self.num_spectrum_resources),
+            dtype=np.int32
+        )
+        self.observation_space = gym.spaces.Dict({
+            "topology": gym.spaces.Box(
+                low=-1, high=1, dtype=int,
+                shape=self.topology.graph["available_slots"].shape
+            ),
+            "running-services": gym.spaces.Box(
+                low=-1, high=np.inf, dtype=int,
+                shape=(1000,)
+            )
+        })
         self.modulations = self.topology.graph.get("modulations", [])
         self.disrupted_services_list = []
         self.disrupted_services = 0
         self.episode_disrupted_services = 0
-
         self.action_space = gym.spaces.MultiDiscrete(
-            (self.k_paths ,len(self.modulations), self.frequency_vector.shape[0])
+            (self.k_paths, len(self.modulations), self.frequency_vector.shape[0])
         )
-
         if seed is None:
             ss = SeedSequence()
             input_seed = int(ss.generate_state(1)[0])
@@ -322,34 +302,27 @@ cdef class QRMSAEnv:
             input_seed = int(seed)
         else:
             raise ValueError("Seed must be an integer.")
-
-        input_seed = input_seed % (2**31)  
-        if input_seed >= 2**31:  
-            input_seed -= 2**32 
-
-        self.input_seed = int(input_seed)  
-
+        input_seed = input_seed % (2 ** 31)
+        if input_seed >= 2 ** 31:
+            input_seed -= 2 ** 32
+        self.input_seed = int(input_seed)
         self._np_random, self._np_random_seed = seeding.np_random(self.input_seed)
-
-        cdef int num_edges = self.topology.number_of_edges()
-        cdef int num_resources = self.num_spectrum_resources
-
+        num_edges = self.topology.number_of_edges()
+        num_resources = self.num_spectrum_resources
         self.spectrum_use = np.zeros(
             (num_edges, num_resources), dtype=np.int32
         )
         self.spectrum_allocation = np.full(
             (num_edges, num_resources),
             fill_value=-1,
-            dtype=np.int64,
+            dtype=np.int64
         )
-
         self.current_service = None
         self.service_id_counter = 0
         self.services_in_progress = []
         self.release_times = []
         self.current_time = 0.0
         self._events = []
-
         self.services_processed = 0
         self.services_accepted = 0
         self.episode_services_processed = 0
@@ -358,7 +331,6 @@ cdef class QRMSAEnv:
         self.bit_rate_provisioned = 0.0
         self.episode_bit_rate_requested = 0.0
         self.episode_bit_rate_provisioned = 0.0
-
         if self.bit_rate_selection == "discrete":
             if bit_rate_probabilities is None:
                 bit_rate_probabilities = [1.0 / len(bit_rates)] * len(bit_rates)
@@ -370,7 +342,6 @@ cdef class QRMSAEnv:
         else:
             self.bit_rate_requested_histogram = None
             self.bit_rate_provisioned_histogram = None
-
         self.reject_action = 1 if allow_rejection else 0
         self.actions_output = np.zeros(
             (self.k_paths + 1, self.num_spectrum_resources + 1), dtype=np.int64
@@ -379,15 +350,21 @@ cdef class QRMSAEnv:
             (self.k_paths + 1, self.num_spectrum_resources + 1), dtype=np.int64
         )
         if file_name != "":
-            final_name = "_".join([file_name, str(self.topology.graph["name"]), str(self.launch_power_dbm), str(self.load), str(seed) + ".csv"])
+            final_name = "_".join([
+                file_name,
+                str(self.topology.graph["name"]),
+                str(self.launch_power_dbm),
+                str(self.load),
+                str(seed) + ".csv"
+            ])
             self.file_stats = open(final_name, "wt", encoding="UTF-8")
             self.file_stats.write("# Service stats file from simulator\n")
             self.file_stats.write("id,source,destination,bit_rate,path_k,path_length,modulation,min_osnr,osnr,ase,nli,disrupted_services\n")
         else:
             self.file_stats = None
-
         if reset:
             self.reset()
+
 
 
     cpdef tuple reset(self, object seed=None, dict options=None):
@@ -419,7 +396,7 @@ cdef class QRMSAEnv:
                 self.episode_bit_rate_requested_histogram[self.current_service.bit_rate] += 1
 
         
-        gym.Env.reset(self, seed=self.input_seed, options=options)
+        gym.Env.reset(self, seed=seed, options=options)
 
         if options is not None and "only_episode_counters" in options and options["only_episode_counters"]:
             return self.observation(), {}
@@ -934,7 +911,7 @@ cdef class QRMSAEnv:
         self.current_service.center_frequency = self.frequency_start + (
             self.frequency_slot_bandwidth * initial_slot
         ) + (
-            self.frequency_slot_bandwidth * (number_slots / 2)
+            self.frequency_slot_bandwidth * (number_slots / 2.0)
         )
         self.current_service.bandwidth = self.frequency_slot_bandwidth * number_slots
 
@@ -986,6 +963,8 @@ cdef class QRMSAEnv:
             ] = -1
 
             # Remove the service from the running services on this link
+            print(service)
+            print(self.topology[node_list[i]][node_list[i + 1]]["running_services"])
             self.topology[node_list[i]][node_list[i + 1]]["running_services"].remove(service)
 
             # Update link statistics after releasing the service
@@ -993,83 +972,193 @@ cdef class QRMSAEnv:
 
         # Remove the service from the global list of running services
         self.topology.graph["running_services"].remove(service)
-    
-    cpdef _update_link_stats(self, str node1, str node2):
-        cdef double last_update, time_diff, last_util, cur_util, utilization
-        cdef double cur_external_fragmentation, cur_link_compactness
-        cdef double external_fragmentation, link_compactness
-        cdef int used_spectrum_slots, max_empty, lambda_min, lambda_max
-        cdef object link  # Assuming this is a dict-like object
-        cdef cnp.ndarray[cnp.int32_t, ndim=1] slot_allocation  # Typed NumPy array
-        cdef list initial_indices, values, lengths, unused_blocks, used_blocks
-        cdef double last_external_fragmentation, last_compactness
 
-        # Get the link between node1 and node2
+    cpdef _update_link_stats(self, str node1, str node2):
+        # Declare todas as variáveis 'cdef' no início da função
+        cdef double last_update
+        cdef double time_diff
+        cdef double last_util
+        cdef double cur_util
+        cdef double utilization
+        cdef double cur_external_fragmentation
+        cdef double cur_link_compactness
+        cdef double external_fragmentation
+        cdef double link_compactness
+        cdef int used_spectrum_slots
+        cdef int max_empty
+        cdef int lambda_min
+        cdef int lambda_max
+        cdef object link  # Presumindo que é um objeto tipo dict
+        cdef cnp.ndarray[cnp.int32_t, ndim=1] slot_allocation  # Array NumPy tipado
+        cdef list initial_indices
+        cdef list values
+        cdef list lengths
+        cdef list unused_blocks
+        cdef list used_blocks
+        cdef double last_external_fragmentation
+        cdef double last_compactness
+        cdef double sum_1_minus_slot_allocation  # Somatório de (1 - slot_allocation)
+        cdef double unused_spectrum_slots
+        cdef Py_ssize_t allocation_size  # Declarado no início
+        cdef int[:] slot_allocation_view
+        cdef int[:] sliced_slot_allocation
+        cdef int last_index  # Variável para armazenar o último índice de used_blocks
+
+        # Atualização do link
+        print(f"Updating link stats for nodes {node1} -> {node2}")
+
+        # Bloco 1: Inicialização e obtenção do link
         link = self.topology[node1][node2]
         last_update = link["last_update"]
+        print(f"Last update time: {last_update}")
+
+        # Inicializar last_external_fragmentation e last_compactness
+        last_external_fragmentation = link.get("external_fragmentation", 0.0)
+        last_compactness = link.get("compactness", 0.0)
+
+        # Bloco 2: Cálculos de tempo e utilização
         time_diff = self.current_time - last_update
+        print(f"Time difference: {time_diff}")
 
         if self.current_time > 0:
             last_util = link["utilization"]
+            print(f"Last utilization: {last_util}")
+
             slot_allocation = self.topology.graph["available_slots"][link["index"], :]
+            print(f"Slot allocation before conversion: {slot_allocation}")
 
-            # Ensure slot_allocation is a Cython-compatible NumPy array of int32
+            # Convert slot_allocation para um array NumPy compatível com Cython de int32
             slot_allocation = <cnp.ndarray[cnp.int32_t, ndim=1]> np.asarray(slot_allocation, dtype=np.int32)
+            slot_allocation_view = slot_allocation
+            print(f"Slot allocation after conversion: {slot_allocation}")
 
-            # Calculate current utilization
+            # Calcular a utilização atual
             used_spectrum_slots = self.num_spectrum_resources - np.sum(slot_allocation)
-            cur_util = used_spectrum_slots / self.num_spectrum_resources
+            print(f"Used spectrum slots: {used_spectrum_slots}")
 
-            # Update utilization using a weighted average
+            # Garantir divisão de ponto flutuante
+            cur_util = <double> used_spectrum_slots / self.num_spectrum_resources
+            print(f"Current utilization: {cur_util}")
+
+            # Atualizar utilização usando uma média ponderada
             utilization = ((last_util * last_update) + (cur_util * time_diff)) / self.current_time
             link["utilization"] = utilization
+            print(f"Updated utilization: {utilization}")
 
-            # Call rle with Cython-compatible NumPy array and convert results to lists
-            initial_indices_np, values_np, lengths_np = rle(slot_allocation)
-            
-            initial_indices = initial_indices_np.tolist()  # Convert NumPy arrays to lists
-            values = values_np.tolist()
-            lengths = lengths_np.tolist()
+        # Bloco 3: Run-Length Encoding e cálculos de fragmentação
+        # Chamar rle com array NumPy compatível com Cython e converter resultados para listas
+        initial_indices_np, values_np, lengths_np = rle(slot_allocation)
+        print(f"RLE initial indices: {initial_indices_np}, values: {values_np}, lengths: {lengths_np}")
 
-            # Compute external fragmentation
-            unused_blocks = [i for i, x in enumerate(values) if x == 1]
+        # Verificar sincronização
+        if len(initial_indices_np) != len(lengths_np):
+            print(f"Error: initial_indices and lengths have different lengths!")
+            raise ValueError("initial_indices and lengths have different lengths")
 
-            # Fix: Get the corresponding values from lengths using list comprehension
-            if len(unused_blocks) > 1 and unused_blocks != [0, len(values) - 1]:
-                max_empty = max([lengths[i] for i in unused_blocks])
-            else:
-                max_empty = 0
+        initial_indices = initial_indices_np.tolist()
+        values = values_np.tolist()
+        lengths = lengths_np.tolist()
+        print(f"Initial indices: {initial_indices}, Values: {values}, Lengths: {lengths}")
 
-            cur_external_fragmentation = 1.0 - (float(max_empty) / float(np.sum(slot_allocation)))
+        # Calcular fragmentação externa
+        unused_blocks = [i for i, x in enumerate(values) if x == 1]
+        print(f"Unused blocks: {unused_blocks}")
 
-            # Compute link spectrum compactness
-            used_blocks = [i for i, x in enumerate(values) if x == 0]
+        if len(unused_blocks) > 1 and unused_blocks != [0, len(values) - 1]:
+            max_empty = max([lengths[i] for i in unused_blocks])
+        else:
+            max_empty = 0
+
+        print(f"Max empty block size: {max_empty}")
+
+        if np.sum(slot_allocation) > 0:
+            # Calculando a fragmentação externa corretamente
+            total_unused_slots = slot_allocation.shape[0] - int(np.sum(slot_allocation))
+            cur_external_fragmentation = 1.0 - (<double> max_empty / <double> total_unused_slots)
+        else:
+            cur_external_fragmentation = 1.0
+        print(f"Current external fragmentation: {cur_external_fragmentation}")
+
+        # Calcular compactação espectral do link
+        used_blocks = [i for i, x in enumerate(values) if x == 0]
+        print(f"Used blocks: {used_blocks}, type of initial_indices: {type(initial_indices)}, type of lengths: {type(lengths)}")
+
+        if isinstance(initial_indices, list) and isinstance(lengths, list):
             if len(used_blocks) > 1:
+                # Verificar se used_blocks contém índices válidos
+                valid = True
+                for idx in used_blocks:
+                    if not isinstance(idx, int):
+                        print(f"Invalid index type in used_blocks: {idx} (type: {type(idx)})")
+                        valid = False
+                        break
+                    if idx < 0 or idx >= len(initial_indices):
+                        print(f"Index out of range in used_blocks: {idx}")
+                        valid = False
+                        break
+                if not valid:
+                    raise IndexError("Invalid indices in used_blocks")
+
+                # Substituir usado_blocks[-1] por usado_blocks[last_index]
+                last_index = len(used_blocks) - 1
                 lambda_min = initial_indices[used_blocks[0]]
-                lambda_max = initial_indices[used_blocks[-1]] + lengths[used_blocks[-1]]
+                lambda_max = initial_indices[used_blocks[last_index]] + lengths[used_blocks[last_index]]
+                print(f"Lambda min: {lambda_min}, Lambda max: {lambda_max}")
 
-                # Evaluate the used part of the spectrum
-                internal_idx_np, internal_values_np, internal_lengths_np = rle(slot_allocation[lambda_min:lambda_max])
-                internal_values = internal_values_np.tolist()  # Convert to lists
-                unused_spectrum_slots = np.sum(1 - internal_values_np)
+                # Garantir que lambda_min e lambda_max estão dentro dos limites
+                allocation_size = slot_allocation.shape[0]  # Mantém como inteiro
+                print(f"Slot allocation size: {allocation_size}")
+                if lambda_min < 0 or lambda_max > allocation_size:
+                    print(f"Error: lambda_min ({lambda_min}) or lambda_max ({lambda_max}) out of bounds for slot_allocation size {allocation_size}")
+                    raise IndexError("lambda_min ou lambda_max fora dos limites")
 
-                if unused_spectrum_slots > 0:
-                    cur_link_compactness = ((lambda_max - lambda_min) / np.sum(1 - slot_allocation)) * (1 / unused_spectrum_slots)
+                if lambda_min >= lambda_max:
+                    print(f"Error: lambda_min ({lambda_min}) >= lambda_max ({lambda_max})")
+                    raise ValueError("lambda_min >= lambda_max")
+
+                # Slicing usando memory views
+                sliced_slot_allocation = slot_allocation_view[lambda_min:lambda_max]
+                sliced_slot_allocation_np = np.asarray(sliced_slot_allocation)  # Converter para numpy.ndarray
+                print(f"Sliced slot allocation: {sliced_slot_allocation_np}")  # Convertendo para array NumPy para melhor visualização
+
+                # Avaliar a parte usada do espectro
+                internal_idx_np, internal_values_np, internal_lengths_np = rle(sliced_slot_allocation_np)
+                print(f"RLE Output - Initial Indices: {internal_idx_np}, Values: {internal_values_np}, Lengths: {internal_lengths_np}")
+
+                internal_values = internal_values_np.tolist()  # Converter para listas
+                unused_spectrum_slots = <double> np.sum(1 - internal_values_np)
+                print(f"Unused spectrum slots between lambda_min and lambda_max: {unused_spectrum_slots}")
+
+                sum_1_minus_slot_allocation = <double> np.sum(1 - slot_allocation)
+                print(f"Sum of (1 - slot_allocation): {sum_1_minus_slot_allocation}")
+
+                if unused_spectrum_slots > 0 and sum_1_minus_slot_allocation > 0:
+                    cur_link_compactness = ((<double> (lambda_max - lambda_min)) / sum_1_minus_slot_allocation) * (1.0 / unused_spectrum_slots)
                 else:
                     cur_link_compactness = 1.0
             else:
                 cur_link_compactness = 1.0
+        else:
+            print(f"Error: initial_indices or lengths are not lists/arrays!")
+            raise TypeError("initial_indices or lengths are not lists/arrays")
 
-            # Update external fragmentation using a weighted average
-            external_fragmentation = ((last_external_fragmentation * last_update) + (cur_external_fragmentation * time_diff)) / self.current_time
-            link["external_fragmentation"] = external_fragmentation
+        print(f"Current link compactness: {cur_link_compactness}")
 
-            # Update link compactness using a weighted average
-            link_compactness = ((last_compactness * last_update) + (cur_link_compactness * time_diff)) / self.current_time
-            link["compactness"] = link_compactness
+        # Atualizar fragmentação externa usando uma média ponderada
+        external_fragmentation = ((last_external_fragmentation * last_update) + (cur_external_fragmentation * time_diff)) / self.current_time
+        link["external_fragmentation"] = external_fragmentation
+        print(f"Updated external fragmentation: {external_fragmentation}")
 
-        # Update the last update time
+        # Atualizar compactação do link usando uma média ponderada
+        link_compactness = ((last_compactness * last_update) + (cur_link_compactness * time_diff)) / self.current_time
+        link["compactness"] = link_compactness
+        print(f"Updated link compactness: {link_compactness}")
+
+        # Bloco 4: Atualizar o último tempo de atualização
         link["last_update"] = self.current_time
+        print(f"Last update time set to: {self.current_time}")
+
+
 
     def close(self):
         return super().close()
