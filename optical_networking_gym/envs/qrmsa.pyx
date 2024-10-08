@@ -20,6 +20,8 @@ from optical_networking_gym.utils import rle
 from optical_networking_gym.core.osnr import calculate_osnr
 import math
 import typing
+import os
+
 if typing.TYPE_CHECKING:
     from optical_networking_gym.topology import Link, Span, Modulation, Path
 
@@ -114,7 +116,7 @@ cdef class Service:
 
 cdef class QRMSAEnv:
     cdef public uint32_t input_seed
-    cdef float load
+    cdef public float load
     cdef int episode_length
     cdef float mean_service_holding_time
     cdef int num_spectrum_resources
@@ -127,16 +129,16 @@ cdef class QRMSAEnv:
     cdef float bit_rate_higher_bound
     cdef object bit_rate_probabilities
     cdef object node_request_probabilities
-    cdef object k_shortest_paths
+    cdef public object k_shortest_paths
     cdef int k_paths
-    cdef float launch_power_dbm
-    cdef float launch_power
+    cdef public float launch_power_dbm
+    cdef public float launch_power
     cdef float bandwidth
-    cdef float frequency_start
-    cdef float frequency_end
-    cdef float frequency_slot_bandwidth
-    cdef float margin
-    cdef object modulations
+    cdef public float frequency_start
+    cdef public float frequency_end
+    cdef public float frequency_slot_bandwidth
+    cdef public float margin
+    cdef public object modulations
     cdef bint measure_disruptions
     cdef public object _np_random
     cdef public int _np_random_seed
@@ -179,7 +181,8 @@ cdef class QRMSAEnv:
     cdef object rng
     cdef object bit_rate_function
     cdef list _events
-    cdef str file_stats
+    cdef object file_stats
+    cdef unicode final_file_name
 
     topology: cython.declare(nx.Graph, visibility="readonly")
     bit_rate_selection: cython.declare(Literal["continuous", "discrete"], visibility="readonly")
@@ -357,14 +360,22 @@ cdef class QRMSAEnv:
                 str(self.load),
                 str(seed) + ".csv"
             ])
+
+            dir_name = os.path.dirname(final_name)
+            if not os.path.exists(dir_name):
+                os.makedirs(dir_name, exist_ok=True)
+
+            self.final_file_name = final_name
             self.file_stats = open(final_name, "wt", encoding="UTF-8")
+
+            # Write to the file
             self.file_stats.write("# Service stats file from simulator\n")
             self.file_stats.write("id,source,destination,bit_rate,path_k,path_length,modulation,min_osnr,osnr,ase,nli,disrupted_services\n")
         else:
             self.file_stats = None
+
         if reset:
             self.reset()
-
 
 
     cpdef tuple reset(self, object seed=None, dict options=None):
@@ -384,31 +395,36 @@ cdef class QRMSAEnv:
         )
 
         if self.bit_rate_selection == "discrete":
-            self.episode_bit_rate_requested_histogram = defaultdict(int)
-            self.episode_bit_rate_provisioned_histogram = defaultdict(int)
+            self.episode_bit_rate_requested_histogram = {}
+            self.episode_bit_rate_provisioned_histogram = {}
+            for bit_rate in self.bit_rates:
+                self.episode_bit_rate_requested_histogram[bit_rate] = 0
+                self.episode_bit_rate_provisioned_histogram[bit_rate] = 0
 
-        self.episode_modulation_histogram = defaultdict(int)
+        self.episode_modulation_histogram = {}
+        for modulation in self.modulations:
+            self.episode_modulation_histogram[modulation.spectral_efficiency] = 0
 
         if self._new_service:
             self.episode_services_processed += 1
-            self.episode_bit_rate_requested = np.int64(self.episode_bit_rate_requested + self.current_service.bit_rate)
+            self.episode_bit_rate_requested += self.current_service.bit_rate
             if self.bit_rate_selection == "discrete":
                 self.episode_bit_rate_requested_histogram[self.current_service.bit_rate] += 1
-
-        
-        gym.Env.reset(self, seed=seed, options=options)
 
         if options is not None and "only_episode_counters" in options and options["only_episode_counters"]:
             return self.observation(), {}
 
+        # Reset other necessary variables
         self.bit_rate_requested = 0.0
         self.bit_rate_provisioned = 0.0
         self.disrupted_services = 0
         self.disrupted_services_list = []
 
+        # Reset topology state
         self.topology.graph["services"] = []
         self.topology.graph["running_services"] = []
         self.topology.graph["last_update"] = 0.0
+
         for lnk in self.topology.edges():
             self.topology[lnk[0]][lnk[1]]["utilization"] = 0.0
             self.topology[lnk[0]][lnk[1]]["last_update"] = 0.0
@@ -428,6 +444,7 @@ cdef class QRMSAEnv:
 
         self.topology.graph["compactness"] = 0.0
         self.topology.graph["throughput"] = 0.0
+
         for lnk in self.topology.edges():
             self.topology[lnk[0]][lnk[1]]["external_fragmentation"] = 0.0
             self.topology[lnk[0]][lnk[1]]["compactness"] = 0.0
@@ -436,7 +453,6 @@ cdef class QRMSAEnv:
         self._next_service()
 
         return self.observation(), {}
-
 
     
     def observation(self):
@@ -615,6 +631,7 @@ cdef class QRMSAEnv:
             "episode_disrupted_services": 0.0,
         }
 
+        # Cálculos das taxas de bloqueio
         if self.services_processed > 0:
             info["service_blocking_rate"] = (
                 self.services_processed - self.services_accepted
@@ -643,25 +660,28 @@ cdef class QRMSAEnv:
                 self.episode_disrupted_services / self.episode_services_accepted
             )
 
-        # Update modulation histogram in the info dictionary
-        for modulation in self.modulations:
-            key = "modulation_{}".format(modulation.spectral_efficiency)
-            info[key] = self.episode_modulation_histogram[modulation.spectral_efficiency]
+        # Atualização das contagens de modulação
+        for current_modulation in self.modulations:
+            spectral_eff = current_modulation.spectral_efficiency
+            key = "modulation_{}".format(str(spectral_eff))  # Converter para string se necessário
+            if spectral_eff in self.episode_modulation_histogram:
+                info[key] = self.episode_modulation_histogram[spectral_eff]
+            else:
+                print(f"Warning: spectral_efficiency {spectral_eff} not found in histogram.")
+                info[key] = 0  # Valor padrão ou outro tratamento adequado
 
-        # Prepare for the next service
-            self._new_service = False
-            self._next_service()
-            terminated = self.episode_services_processed == self.episode_length
-            print(self.current_service.__repr__())
-            print(self.topology.graph['available_slots'])
-            print(info)
-            return (
-                self.observation(),
-                reward,
-                terminated,
-                truncated,
-                info,
-            )
+        # Preparar para o próximo serviço
+        self._new_service = False
+        self._next_service()
+        terminated = self.episode_services_processed == self.episode_length
+        print(info)
+        return (
+            self.observation(),
+            reward,
+            terminated,
+            truncated,
+            info,
+        )
 
     cpdef _next_service(self):
         """
@@ -1103,11 +1123,9 @@ cdef class QRMSAEnv:
                 last_index = len(used_blocks) - 1
                 lambda_min = initial_indices[used_blocks[0]]
                 lambda_max = initial_indices[used_blocks[last_index]] + lengths[used_blocks[last_index]]
-                print(f"Lambda min: {lambda_min}, Lambda max: {lambda_max}")
-
                 # Garantir que lambda_min e lambda_max estão dentro dos limites
                 allocation_size = slot_allocation.shape[0]  # Mantém como inteiro
-                print(f"Slot allocation size: {allocation_size}")
+
                 if lambda_min < 0 or lambda_max > allocation_size:
                     print(f"Error: lambda_min ({lambda_min}) or lambda_max ({lambda_max}) out of bounds for slot_allocation size {allocation_size}")
                     raise IndexError("lambda_min ou lambda_max fora dos limites")
@@ -1119,7 +1137,6 @@ cdef class QRMSAEnv:
                 # Slicing usando memory views
                 sliced_slot_allocation = slot_allocation_view[lambda_min:lambda_max]
                 sliced_slot_allocation_np = np.asarray(sliced_slot_allocation)  # Converter para numpy.ndarray
-                print(f"Sliced slot allocation: {sliced_slot_allocation_np}")  # Convertendo para array NumPy para melhor visualização
 
                 # Avaliar a parte usada do espectro
                 internal_idx_np, internal_values_np, internal_lengths_np = rle(sliced_slot_allocation_np)
@@ -1127,10 +1144,8 @@ cdef class QRMSAEnv:
 
                 internal_values = internal_values_np.tolist()  # Converter para listas
                 unused_spectrum_slots = <double> np.sum(1 - internal_values_np)
-                print(f"Unused spectrum slots between lambda_min and lambda_max: {unused_spectrum_slots}")
 
                 sum_1_minus_slot_allocation = <double> np.sum(1 - slot_allocation)
-                print(f"Sum of (1 - slot_allocation): {sum_1_minus_slot_allocation}")
 
                 if unused_spectrum_slots > 0 and sum_1_minus_slot_allocation > 0:
                     cur_link_compactness = ((<double> (lambda_max - lambda_min)) / sum_1_minus_slot_allocation) * (1.0 / unused_spectrum_slots)
@@ -1142,23 +1157,51 @@ cdef class QRMSAEnv:
             print(f"Error: initial_indices or lengths are not lists/arrays!")
             raise TypeError("initial_indices or lengths are not lists/arrays")
 
-        print(f"Current link compactness: {cur_link_compactness}")
 
         # Atualizar fragmentação externa usando uma média ponderada
         external_fragmentation = ((last_external_fragmentation * last_update) + (cur_external_fragmentation * time_diff)) / self.current_time
         link["external_fragmentation"] = external_fragmentation
-        print(f"Updated external fragmentation: {external_fragmentation}")
 
-        # Atualizar compactação do link usando uma média ponderada
         link_compactness = ((last_compactness * last_update) + (cur_link_compactness * time_diff)) / self.current_time
         link["compactness"] = link_compactness
-        print(f"Updated link compactness: {link_compactness}")
 
-        # Bloco 4: Atualizar o último tempo de atualização
         link["last_update"] = self.current_time
-        print(f"Last update time set to: {self.current_time}")
 
+    cpdef cnp.ndarray get_available_slots(self, object path):
+        """
+        Compute the available slots by element-wise multiplying the relevant rows
+        from the available_slots matrix in the topology graph.
+        """
+        cdef Py_ssize_t i, n
+        cdef tuple node_list = path.node_list
+        cdef list indices
+        cdef cnp.ndarray available_slots_matrix
+        cdef cnp.ndarray product
+        cdef long[:, :] slots_view
+        cdef long[:] product_view
+        cdef Py_ssize_t num_rows, num_cols
 
+        n = len(node_list) - 1
+
+        indices = [0] * n
+
+        for i in range(n):
+            indices[i] = self.topology[node_list[i]][node_list[i + 1]]["index"]
+
+        available_slots_matrix = self.topology.graph["available_slots"][indices, :]
+
+        num_rows = available_slots_matrix.shape[0]
+        num_cols = available_slots_matrix.shape[1]
+
+        slots_view = available_slots_matrix
+
+        product = available_slots_matrix[0].copy()
+        product_view = product
+        for i in range(1, num_rows):
+            for j in range(num_cols):
+                product_view[j] *= slots_view[i, j]
+
+        return product
 
     def close(self):
         return super().close()

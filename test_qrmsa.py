@@ -2,9 +2,11 @@ from typing import Tuple
 
 import networkx as nx
 from gymnasium.utils.env_checker import check_env
+import numpy as np
 
 from optical_networking_gym.topology import Modulation, get_topology
 from optical_networking_gym.wrappers.qrmsa_gym import QRMSAEnvWrapper  # Importe o wrapper
+from optical_networking_gym.validation.utils import plot_spectrum_assignment 
 
 cur_modulations: Tuple[Modulation] = (
     Modulation(
@@ -155,6 +157,13 @@ def check_step():
             print(f"Step {step + 1}, Action: {action}")
             observation, reward, terminated, truncated, info = env.step(action)
             print(f"Step {step + 1}: Reward = {reward}, Terminated = {terminated}, Truncated = {truncated}")
+
+            spectrum_services = env.get_spectrum_use_services()
+            indices = np.where(spectrum_services != -1)
+            max_index = np.max(indices[1])
+            
+            plot_spectrum_assignment(spectrum_services[:, 0:max_index+2], values=True)
+
         except Exception as e:
             print(f"An exception occurred at step {step + 1}: {e}")
             break
