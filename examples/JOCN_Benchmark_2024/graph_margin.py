@@ -2,7 +2,7 @@ import argparse
 import logging
 import os
 import random
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from multiprocessing import Pool 
 
 import numpy as np
@@ -19,7 +19,7 @@ np.set_printoptions(linewidth=np.inf)
 seed = 20
 random.seed(seed)
 
-# # Monkey-patch the Service class to support ordering
+# Monkey-patch the Service class to support ordering (fixes heapq TypeError)
 # def service_lt(self, other):
 #     return self.time < other.time  # Replace 'time' with the appropriate attribute
 
@@ -59,8 +59,8 @@ def parse_arguments():
     parser.add_argument(
         '-th', '--threads',
         type=int,
-        default=2,
-        help='Number of threads to be used to run the simulations (default: 2)'
+        default=1,
+        help='Number of threads to be used to run the simulations (default: 1)'
     )
 
     return parser.parse_args()
@@ -119,7 +119,7 @@ def get_loads(topology_name: str) -> np.ndarray:
     elif topology_name == "janos-us":
         return np.arange(100, 601, 50)
     elif topology_name == "nsfnet_chen.txt":
-        return np.arange(100, 601, 50)
+        return np.arange(100, 601, 50)  # Adjust as needed
     else:
         raise ValueError(f"Unknown topology name: {topology_name}")
 
@@ -133,7 +133,7 @@ def prepare_env_args(
     frequency_start: float,
     frequency_slot_bandwidth: float,
     bit_rates: np.ndarray,
-    margin: int,
+    margin: float,  # Changed to float to match margins array
     loads: np.ndarray,
     strategies: List[int]
 ) -> List[Tuple]:
@@ -143,7 +143,7 @@ def prepare_env_args(
             sim_args = (
                 n_eval_episodes,
                 strategy,
-                f"examples/jocn_benchmark_2024/results/load_episodes_{strategy}",
+                f"examples/jocn_benchmark_2024/results/mr_episodes_{strategy}_{margin}",
                 topology,
                 10,
                 True,
@@ -157,7 +157,7 @@ def prepare_env_args(
                 "discrete",
                 bit_rates,
                 margin,
-                f"examples/jocn_benchmark_2024/results/load_services_{strategy}",
+                f"examples/jocn_benchmark_2024/results/mr_services_{strategy}_{margin}",
                 False,
             )
             env_args.append(sim_args)
@@ -181,7 +181,7 @@ def main():
     # Define modulation formats
     cur_modulations = define_modulations()
 
-    # Load topology
+    # Load topology using get_topology
     topology = get_topology(
         os.path.join("examples", "topologies", topology_name),
         "NSFNET",                # Name of the topology, adjust if necessary
@@ -193,36 +193,33 @@ def main():
     )
 
     # Simulation parameters
-    attenuation_db_km = 0.2
-    default_attenuation_normalized = attenuation_db_km / (2 * 10 * np.log10(np.exp(1)) * 1e3)
-    default_noise_figure_db = 4.5
-    default_noise_figure = 10 ** (default_noise_figure_db / 10)
-
     bandwidth = 4e12
     frequency_start = 3e8 / 1565e-9
     frequency_end = frequency_start + bandwidth
     frequency_slot_bandwidth = 12.5e9
-    bit_rates = (10, 40, 100, 400)
-    margin = 0
+    bit_rates =(10, 40, 100, 400)
+    margins = np.arange(0, 2.1, 0.5) 
 
-    # Define strategies
     strategies = list(range(1, 5))
 
-    # Prepare environment arguments
-    env_args = prepare_env_args(
-        n_eval_episodes,
-        topology,
-        load,
-        episode_length,
-        launch_power,
-        bandwidth,
-        frequency_start,
-        frequency_slot_bandwidth,
-        bit_rates,
-        margin,
-        loads,
-        strategies
-    )
+    env_args = []
+    for margin in margins:
+        env_args.extend(
+            prepare_env_args(
+                n_eval_episodes,
+                topology,
+                load,
+                episode_length,
+                launch_power,
+                bandwidth,
+                frequency_start,
+                frequency_slot_bandwidth,
+                bit_rates,
+                margin,
+                loads,
+                strategies
+            )
+        )
 
     # Execute simulations with or without multiprocessing based on thread count
     if threads > 1:
