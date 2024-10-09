@@ -1,31 +1,41 @@
 import cython
+cimport numpy as cnp
+cnp.import_array() 
 import numpy as np
 
-@cython.cclass
-class Span:
+def rle(cnp.ndarray[cnp.int32_t, ndim=1] array):
+    cdef Py_ssize_t n = array.shape[0]
+    cdef list initial_indices = []
+    cdef list values = []
+    cdef list lengths = []
 
-    length = cython.declare(cython.double, visibility='readonly')
-    attenuation_db_km = cython.declare(cython.double, visibility='readonly')
-    attenuation_normalized = cython.declare(cython.double, visibility='readonly')
-    noise_figure_db = cython.declare(cython.double, visibility='readonly')
-    noise_figure_normalized = cython.declare(cython.double, visibility='readonly')
+    if n == 0:
+        return (
+            np.array(initial_indices, dtype=np.int32),
+            np.array(values, dtype=np.int32),
+            np.array(lengths, dtype=np.int32)
+        )
 
-    def __init__(self, length: float, attenuation: float, noise_figure: float):
-        self.length = length
+    cdef int current_value = array[0]
+    cdef Py_ssize_t start = 0
 
-        self.attenuation_db_km = attenuation
-        self.attenuation_normalized = self.attenuation_db_km / (2 * 10 * np.log10(np.exp(1)) * 1e3)  # dB/km ===> 1/m
+    for i in range(1, n):
+        if array[i] != current_value:
+            initial_indices.append(start)
+            values.append(current_value)
+            lengths.append(i - start)
+            start = i
+            current_value = array[i]
 
-        self.noise_figure_db = noise_figure
-        self.noise_figure_normalized = 10 ** (self.noise_figure_db / 10)  # dB ===> norm
-    
-    def set_attenuation(self, attenuation: float) -> None:
-        self.attenuation_db_km = attenuation
-        self.attenuation_normalized = self.attenuation_db_km / (2 * 10 * np.log10(np.exp(1)) * 1e3)  # dB/km ===> 1/m
-    
-    def set_noise_figure(self, noise_figure: float) -> None:
-        self.noise_figure_db = noise_figure
-        self.noise_figure_normalized = 10 ** (self.noise_figure_db / 10)  # dB ===> norm
-    
-    def __repr__(self) -> str:
-        return f"Span(length={self.length:.2f}, attenuation_db_km={self.attenuation_db_km}, noise_figure_db={self.noise_figure_db})"
+    # Adiciona o último run
+    initial_indices.append(start)
+    values.append(current_value)
+    lengths.append(n - start)
+
+    # Converte listas para arrays NumPy tipados
+    return (
+        np.array(initial_indices, dtype=np.int32),
+        np.array(values, dtype=np.int32),
+        np.array(lengths, dtype=np.int32)
+    )
+
