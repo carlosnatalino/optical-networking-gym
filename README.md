@@ -65,3 +65,14 @@ To install the research dependencies, after the installation steps above, run:
 ```bash
 pip install -e ".[research]"
 ```
+
+# Contributing
+
+Contributions from the community are welcome.
+To start the process, open an issue in GitHub.
+Then, we can discuss the functionality, and if the feature you are interested in is of the interest of the maintainers.
+After that, we can accept pull requests.
+
+# Maintainers
+
+- Carlos Natalino <carlos.natalino@chalmers.se>
