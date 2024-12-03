@@ -1,5 +1,6 @@
 import os
 from setuptools import setup, Extension
+import platform
 
 import numpy as np
 from Cython.Build import cythonize
@@ -13,8 +14,14 @@ DEBUG = get_env_or_default("DEBUG", "0") == "1"
 
 compiler_directives = {"language_level": "3"}
 define_macros = [("NPY_NO_DEPRECATED_API", "NPY_1_7_API_VERSION")]
-extra_compile_args = []
 extra_link_args = []
+
+extra_compile_args = []
+if platform.system() == "Windows":
+    extra_compile_args = ["/O2", "/Wall"]
+else:
+    extra_compile_args = ["-O3", "-march=native", "-ffast-math"]
+
 
 if DEBUG:
     define_macros.append(("CYTHON_TRACE_NOGIL", "1"))

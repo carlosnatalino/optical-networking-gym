@@ -17,10 +17,11 @@ import numpy as np
 from collections import defaultdict
 from numpy.random import SeedSequence
 from optical_networking_gym.utils import rle
-from optical_networking_gym.core.osnr import calculate_osnr
+from optical_networking_gym.core.osnr import calculate_osnr, calculate_osnr_observation
 import math
 import typing
 import os
+from scipy.signal import convolve
 
 if typing.TYPE_CHECKING:
     from optical_networking_gym.topology import Link, Span, Modulation, Path
@@ -41,7 +42,7 @@ cdef class Service:
     cdef public double bandwidth
     cdef public int number_slots
     cdef public int core
-    cdef public float launch_power
+    cdef public double launch_power
     cdef public bint accepted
     cdef public bint blocked_due_to_resources
     cdef public bint blocked_due_to_osnr
@@ -68,7 +69,7 @@ cdef class Service:
         int bandwidth = 0,
         int number_slots = 0,
         int core = 0,
-        float launch_power = 0.0,
+        double launch_power = 0.0,
         bint accepted = False,
         bint blocked_due_to_resources = True,
         bint blocked_due_to_osnr = True,
@@ -116,28 +117,28 @@ cdef class Service:
 
 cdef class QRMSAEnv:
     cdef public uint32_t input_seed
-    cdef public float load
+    cdef public double load
     cdef int episode_length
-    cdef float mean_service_holding_time
-    cdef int num_spectrum_resources
-    cdef float channel_width
+    cdef double mean_service_holding_time
+    cdef public int num_spectrum_resources
+    cdef public double channel_width
     cdef bint allow_rejection
     cdef readonly object topology
     cdef readonly str bit_rate_selection
-    cdef readonly tuple bit_rates
-    cdef float bit_rate_lower_bound
-    cdef float bit_rate_higher_bound
+    cdef public tuple bit_rates
+    cdef double bit_rate_lower_bound
+    cdef double bit_rate_higher_bound
     cdef object bit_rate_probabilities
     cdef object node_request_probabilities
     cdef public object k_shortest_paths
     cdef int k_paths
-    cdef public float launch_power_dbm
-    cdef public float launch_power
-    cdef float bandwidth
-    cdef public float frequency_start
-    cdef public float frequency_end
-    cdef public float frequency_slot_bandwidth
-    cdef public float margin
+    cdef public double launch_power_dbm
+    cdef public double launch_power
+    cdef double bandwidth
+    cdef public double frequency_start
+    cdef public double frequency_end
+    cdef public double frequency_slot_bandwidth
+    cdef public double margin
     cdef public object modulations
     cdef bint measure_disruptions
     cdef public object _np_random
@@ -152,10 +153,10 @@ cdef class QRMSAEnv:
     cdef int services_accepted
     cdef int episode_services_processed
     cdef int episode_services_accepted
-    cdef float bit_rate_requested
-    cdef float bit_rate_provisioned
-    cdef float episode_bit_rate_requested
-    cdef float episode_bit_rate_provisioned
+    cdef double bit_rate_requested
+    cdef double bit_rate_provisioned
+    cdef double episode_bit_rate_requested
+    cdef double episode_bit_rate_provisioned
     cdef object bit_rate_requested_histogram
     cdef object bit_rate_provisioned_histogram
     cdef object slots_provisioned_histogram
@@ -175,14 +176,15 @@ cdef class QRMSAEnv:
     cdef object actions_output
     cdef object actions_taken
     cdef bint _new_service
-    cdef float current_time
-    cdef float mean_service_inter_arrival_time
+    cdef double current_time
+    cdef double mean_service_inter_arrival_time
     cdef public object frequency_vector
     cdef object rng
     cdef object bit_rate_function
     cdef list _events
     cdef object file_stats
     cdef unicode final_file_name
+    cdef int j
 
     topology: cython.declare(nx.Graph, visibility="readonly")
     bit_rate_selection: cython.declare(Literal["continuous", "discrete"], visibility="readonly")
@@ -194,7 +196,7 @@ cdef class QRMSAEnv:
         num_spectrum_resources: int = 320,
         episode_length: int = 1000,
         load: float = 10.0,
-        mean_service_holding_time: float = 10800.0,
+        mean_service_holding_time: double = 10800.0,
         bit_rate_selection: str = "continuous",
         bit_rates: tuple = (10, 40, 100),
         bit_rate_probabilities = None,
@@ -210,9 +212,10 @@ cdef class QRMSAEnv:
         seed: object = None,
         allow_rejection: bool = False,
         reset: bool = True,
-        channel_width: float = 12.5,
+        channel_width: double = 12.5,
         k_paths: int = 5,
-        file_name: str = ""
+        file_name: str = "",
+        j: int = 4
     ):
         self.rng = random.Random()
         self._events = []
@@ -265,7 +268,7 @@ cdef class QRMSAEnv:
         self.frequency_slot_bandwidth = frequency_slot_bandwidth
         self.margin = margin
         self.measure_disruptions = measure_disruptions
-        self.frequency_end = self.frequency_start + self.frequency_slot_bandwidth * self.num_spectrum_resources
+        self.frequency_end = self.frequency_start + (self.frequency_slot_bandwidth * self.num_spectrum_resources)
         assert math.isclose(self.frequency_end - self.frequency_start, self.bandwidth, rel_tol=1e-5)
         self.frequency_vector = np.linspace(
             self.frequency_start,
@@ -281,23 +284,38 @@ cdef class QRMSAEnv:
             (self.topology.number_of_edges(), self.num_spectrum_resources),
             dtype=np.int32
         )
-        self.observation_space = gym.spaces.Dict({
-            "topology": gym.spaces.Box(
-                low=-1, high=1, dtype=int,
-                shape=self.topology.graph["available_slots"].shape
-            ),
-            "running-services": gym.spaces.Box(
-                low=-1, high=np.inf, dtype=int,
-                shape=(1000,)
-            )
-        })
+       
         self.modulations = self.topology.graph.get("modulations", [])
         self.disrupted_services_list = []
         self.disrupted_services = 0
         self.episode_disrupted_services = 0
+
         self.action_space = gym.spaces.MultiDiscrete(
             (self.k_paths, len(self.modulations), self.frequency_vector.shape[0])
         )
+
+        total_dim = (
+            1  # Taxa de bits normalizada
+            + (2 * self.topology.number_of_nodes())  # Origem e destino codificados
+            + self.k_paths  # Comprimentos das rotas
+            + (self.k_paths * len(self.modulations) * (2 * self.j + 5))  # Espectro
+        )
+
+        # Espaço de observação como um Box contínuo
+        self.observation_space = gym.spaces.Dict({
+            'observation': gym.spaces.Box(
+                low=-10.0,  # Limite inferior, com base nas normalizações
+                high=10.0,  # Limite superior, com base nas normalizações
+                shape=(total_dim,),  # Dimensão total calculada
+                dtype=np.float32  # Tipo de dado usado na observação
+            ),
+            'mask': gym.spaces.Box(
+                low=0.0,  # Máscara de ações válidas deve estar no intervalo [0, 1]
+                high=1.0,
+                shape=(self.k_paths, len(self.modulations), self.frequency_vector.shape[0]),  # Dimensão da máscara
+                dtype=np.uint8
+            )
+        })
         if seed is None:
             ss = SeedSequence()
             input_seed = int(ss.generate_state(1)[0])
@@ -456,22 +474,188 @@ cdef class QRMSAEnv:
 
     
     def observation(self):
-        available_slots = self.topology.graph["available_slots"]
-        running_services = self.topology.graph["running_services"]
-        
-        # Create a padded array to store service IDs
-        padded_running_services = np.full((1000,), fill_value=-1, dtype=int)
-        
-        # Extract the service_id from each Service object and store it in the array
-        service_ids = [service.service_id for service in running_services[:1000]]
-        
-        # Store the service IDs in the padded array
-        padded_running_services[:len(service_ids)] = service_ids
+        topology = self.topology
+        current_service = self.current_service
+        num_spectrum_resources = self.num_spectrum_resources
+        k_shortest_paths = self.k_shortest_paths
+        modulations = self.modulations
+        num_modulations = len(modulations)
+        num_nodes = topology.number_of_nodes()
+        frequency_slot_bandwidth = self.channel_width * 1e9 
 
-        return {
-            "topology": available_slots,
-            "running-services": padded_running_services
-        }
+        # IDs de origem e destino
+        source_id = int(current_service.source_id)
+        destination_id = int(current_service.destination_id)
+
+        # Criação da matriz binária de origem e destino
+        source_destination_tau = np.zeros((2, num_nodes), dtype=np.float32)
+        source_destination_tau[0, source_id] = 1.0
+        source_destination_tau[1, destination_id] = 1.0
+
+        # Parâmetros fixos
+        num_paths_to_evaluate = self.k_paths  # Número de rotas k mais curtas a avaliar
+        num_blocks_to_consider = self.j  # Número máximo de blocos disponíveis a considerar por rota
+        num_metrics_per_modulation = 2 * num_blocks_to_consider + 5  # Métricas por modulação
+
+        # Inicialização da observação do espectro com valores -1.0
+        spectrum_obs = np.full(
+            (num_paths_to_evaluate, num_modulations, num_metrics_per_modulation),
+            fill_value=-1.0,
+            dtype=np.float32
+        )
+
+        # Inicialização da máscara de ações válidas com zeros
+        action_mask = np.zeros((num_paths_to_evaluate, num_modulations, self.frequency_vector.shape[0]), dtype=np.uint8)
+
+        # Estatísticas da topologia para normalização
+        link_lengths = [topology[x][y]["length"] for x, y in topology.edges()]
+        min_lenghts = min(link_lengths)
+        max_lenghts = max(link_lengths)
+        std_link_length = np.std(link_lengths)
+        std_link_length = std_link_length if std_link_length != 0 else 1.0  # Evitar divisão por zero
+
+        # Valores máximos para normalização
+        max_block_length = num_spectrum_resources  # Máximo comprimento de bloco espectral
+        max_bit_rate = max(self.bit_rates)         # Taxa de bits máxima suportada
+
+        # Inicialização dos comprimentos das rotas normalizados
+        route_lengths = np.zeros((num_paths_to_evaluate, 1), dtype=np.float32)
+
+        # Processar cada rota k mais curta
+        for path_index, route in enumerate(k_shortest_paths[current_service.source, current_service.destination]):
+            if path_index >= num_paths_to_evaluate:
+                break  # Considerar apenas as primeiras num_paths_to_evaluate rotas
+
+            # Normalização do comprimento da rota
+            route_length = route.length
+            route_lengths[path_index, 0] = self.normalize(route_length, min_lenghts, max_lenghts)
+
+            # Obter slots disponíveis para a rota
+            available_slots = self.get_available_slots(route)  # Assume que retorna um array booleano
+
+            # Processar cada modulação disponível
+            for modulation_index, modulation in enumerate(modulations):
+                # Número de slots necessários para o serviço atual com esta modulação
+                num_slots_required = self.get_number_slots(current_service, modulation)
+
+                # Inicialização dos valores de OSNR
+                osnr_ok = False  # Inicialização
+                osnr_value = -1.0  # Valor padrão em caso de falha
+
+                # Identificar blocos disponíveis usando RLE
+                idx, values, lengths = rle(available_slots)
+                initial_indices = idx[values == 1]
+                lengths_available = lengths[values == 1]
+
+                # Filtrar blocos que possuem tamanho suficiente
+                valid_blocks = lengths_available >= num_slots_required
+                initial_indices = initial_indices[valid_blocks]
+                lengths_valid = lengths_available[valid_blocks]
+
+                # Se houver pelo menos um bloco válido, calcular a OSNR
+                if initial_indices.size > 0:
+                    # Selecionar o último bloco válido para calcular a OSNR 
+                    initial_slot = initial_indices[-1]
+                    service_bandwidth = num_slots_required * frequency_slot_bandwidth
+                    service_center_frequency = self.frequency_start + (
+                        frequency_slot_bandwidth * initial_slot
+                    ) + (
+                        frequency_slot_bandwidth * (num_slots_required / 2.0)
+                    )
+                    path_links = route.links
+                    service_id = self.current_service.service_id
+                    service_launch_power = 10 ** ((self.launch_power_dbm - 30) / 10)
+                    gsnr_th = modulation.minimum_osnr
+                    osnr_value = calculate_osnr_observation(
+                        self,
+                        path_links,
+                        service_bandwidth,
+                        service_center_frequency,
+                        service_id,
+                        service_launch_power,
+                        gsnr_th
+                    )
+
+                    # Verificar se a OSNR atende ao requisito
+                    if osnr_value >= 0:
+                        osnr_ok = True
+
+                # Atualizar a observação do espectro
+                # Preencher observação do espectro (mesmo que a alocação possa não ser válida)
+                for block_index, (initial_index, block_length) in enumerate(zip(initial_indices[:num_blocks_to_consider], lengths_valid[:num_blocks_to_consider])):
+                    # Índice inicial do slot, normalizado
+                    spectrum_obs[path_index, modulation_index, block_index * 2] = (
+                        2 * (initial_index - 0.5 * num_spectrum_resources) / num_spectrum_resources
+                    )
+                    # Comprimento do bloco, normalizado
+                    spectrum_obs[path_index, modulation_index, block_index * 2 + 1] = self.normalize(block_length, max_block_length, num_slots_required)
+
+                # Número normalizado de slots necessários
+                spectrum_obs[path_index, modulation_index, num_blocks_to_consider * 2] = (num_slots_required - 5.5) / 3.5
+
+                # Proporção total de slots disponíveis
+                total_available_slots = np.sum(available_slots)
+                total_available_slots_ratio = (
+                    2 * (total_available_slots - 0.5 * num_spectrum_resources) / num_spectrum_resources
+                )
+                spectrum_obs[path_index, modulation_index, num_blocks_to_consider * 2 + 1] = total_available_slots_ratio
+
+                # Tamanho médio dos blocos disponíveis
+                if lengths_valid.size > 0:
+                    mean_block_size = ((np.mean(lengths_valid) - 4) / 4)/100
+                    spectrum_obs[path_index, modulation_index, num_blocks_to_consider * 2 + 2] = mean_block_size
+                else:
+                    spectrum_obs[path_index, modulation_index, num_blocks_to_consider * 2 + 2] = 0.0  # Sem blocos disponíveis
+
+                # Cálculo da OSNR
+                spectrum_obs[path_index, modulation_index, num_blocks_to_consider * 2 + 3] = osnr_value
+
+                # Atualizar a máscara de ações
+                if osnr_ok:
+                    # Encontrar todos os possíveis inícios de alocação de blocos válidos
+                    available_slots_int = available_slots.astype(int)
+                    window = np.ones(num_slots_required, dtype=int)
+                    convolution = convolve(available_slots_int, window, mode='valid')
+                    valid_start_indices = np.where(convolution == num_slots_required)[0]
+                    # Marcar na máscara as frequências onde a alocação é possível
+                    for start_idx in valid_start_indices:
+                        action_mask[path_index, modulation_index, start_idx] = 1.0
+                else:
+                    # Se OSNR não está ok, todas as frequências permanecem como 0 (já estão inicializadas)
+                    pass
+        # Observação da taxa de bits do serviço atual, normalizada
+        bit_rate_obs = np.array([[current_service.bit_rate / max_bit_rate]], dtype=np.float32)
+
+        # Concatenar todas as observações em um array de tamanho fixo (sem incluir a máscara)
+        observation = np.concatenate((
+            bit_rate_obs.flatten(),
+            source_destination_tau.flatten(),
+            route_lengths.flatten(),
+            spectrum_obs.flatten()
+        ), axis=0)
+
+        # Garantir que a observação tenha o tipo correto
+        observation = observation.astype(np.float32)
+
+        return {'observation': observation, 'mask': action_mask}
+
+
+        # available_slots = self.topology.graph["available_slots"]
+        # running_services = self.topology.graph["running_services"]
+        
+        # # Create a padded array to store service IDs
+        # padded_running_services = np.full((1000,), fill_value=-1, dtype=int)
+        
+        # # Extract the service_id from each Service object and store it in the array
+        # service_ids = [service.service_id for service in running_services[:1000]]
+        
+        # # Store the service IDs in the padded array
+        # padded_running_services[:len(service_ids)] = service_ids
+
+        # return {
+        #     "topology": available_slots,
+        #     "running-services": padded_running_services
+        # }
 
 
     cpdef tuple[object, float, bint, bint, dict] step(self, cnp.ndarray action):
@@ -491,9 +675,10 @@ cdef class QRMSAEnv:
         cdef str key
         cdef bint truncated = False
         cdef bint terminated
-
+        print("\n\n", "#"*20)
+        print("env:",action)
+        print("paths:", "\n".join([str(x) for x in self.k_shortest_paths[self.current_service.source, self.current_service.destination]]))
         if action is not None:
-            print(f"action: {action}")
             # Unpack the action tuple
             route = int(action[0])
             modulation_index = int(action[1])
@@ -504,19 +689,16 @@ cdef class QRMSAEnv:
             modulation = self.modulations[modulation_index]
 
             # Get the path based on the route index
-            path = self.k_shortest_paths[
-                self.current_service.source,
-                self.current_service.destination,
-            ][route]
-
+            path = self.k_shortest_paths[self.current_service.source, self.current_service.destination][route]
             # Calculate the number of slots required
+            print(path)
             number_slots = self.get_number_slots(
-                self.current_service,
-                modulation,
+                service=self.current_service,
+                modulation=modulation,
             )
-
             # Check if the path is free for the given slots
-            if self.is_path_free(path, initial_slot, number_slots):
+            path_free_bool = self.is_path_free(path=path, initial_slot=initial_slot, number_slots=number_slots)
+            if path_free_bool:
                 self.current_service.path = path
                 self.current_service.initial_slot = initial_slot
                 self.current_service.number_slots = number_slots
@@ -674,7 +856,6 @@ cdef class QRMSAEnv:
         self._new_service = False
         self._next_service()
         terminated = self.episode_services_processed == self.episode_length
-        print(info)
         return (
             self.observation(),
             reward,
@@ -740,7 +921,7 @@ cdef class QRMSAEnv:
                 heapq.heappush(self._events, (time, service_to_release))
                 break 
     
-    cpdef void set_load(self, float load=-1.0, float mean_service_holding_time=-1.0):
+    cpdef void set_load(self, double load=-1.0, float mean_service_holding_time=-1.0):
         if load > 0:
             self.load = load
         if mean_service_holding_time > 0:
@@ -889,6 +1070,7 @@ cdef class QRMSAEnv:
         cdef object link  # Replace with appropriate type if possible
 
         # Check if the path is free
+        print("1:", path)
         if not self.is_path_free(path, initial_slot, number_slots):
             available_slots = self.get_available_slots(path)
             raise ValueError(
@@ -1203,5 +1385,25 @@ cdef class QRMSAEnv:
 
         return product
 
+    cpdef tuple get_available_blocks(self, int path, int slots, j):
+        cdef cnp.ndarray available_slots = self.get_available_slots(
+            self.k_shortest_paths[
+                self.current_service.source, 
+                self.current_service.destination
+            ][path]
+        )
+        cdef cnp.ndarray initial_indices, values, lengths
+
+        initial_indices, values, lengths = rle(available_slots)
+
+        cdef cnp.ndarray available_indices_np = np.where(values == 1)[0]
+        cdef cnp.ndarray sufficient_indices_np = np.where(lengths >= slots)[0]
+        cdef cnp.ndarray final_indices_np = np.intersect1d(available_indices_np, sufficient_indices_np)[:j]
+
+        return initial_indices[final_indices_np], lengths[final_indices_np]
+
     def close(self):
         return super().close()
+    
+    def normalize(self, x, x_min, x_max):
+        return ((x - x_min) / (x_max - x_min)) * 2 - 1

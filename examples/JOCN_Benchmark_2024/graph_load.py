@@ -19,11 +19,7 @@ np.set_printoptions(linewidth=np.inf)
 seed = 20
 random.seed(seed)
 
-# # Monkey-patch the Service class to support ordering
-# def service_lt(self, other):
-#     return self.time < other.time  # Replace 'time' with the appropriate attribute
 
-# Service.__lt__ = service_lt  # Add the __lt__ method to the Service class
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Optical Network Simulation')
