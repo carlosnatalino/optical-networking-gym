@@ -37,8 +37,7 @@ class QRMSAEnvWrapper(gym.Env):
         self.bit_rates = kwargs["bit_rates"]
         self.channel_width = kwargs.get("channel_width",12.5)
         self.seed = kwargs.get("seed", 10)
-        
-
+    
     def reset(self, *, seed=None, options=None):
         if seed is not None:
             self._np_random, seed = seeding.np_random(seed)
@@ -48,8 +47,6 @@ class QRMSAEnvWrapper(gym.Env):
         return obs
 
     def step(self, action: Any):
-        print(action)
-        print("type:",type(action))
         return self.env.step(action)
 
     def render(self, mode='human'):

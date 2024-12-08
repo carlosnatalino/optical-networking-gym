@@ -1,0 +1,12 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Python C++ Debug",
+      "type": "pythoncpp",
+      "request": "launch",
+      "pythonConfig": "default",
+      "cppConfig": "default (win) Attach",
+    }
+  ]
+}
