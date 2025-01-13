@@ -172,7 +172,7 @@ cdef class QRMSAEnv:
     cdef object episode_bit_rate_requested_histogram
     cdef object episode_bit_rate_provisioned_histogram
     cdef object spectrum_slots_allocation
-    cdef public int reject_action
+    cdef int reject_action
     cdef object actions_output
     cdef object actions_taken
     cdef bint _new_service
@@ -210,7 +210,7 @@ cdef class QRMSAEnv:
         margin: float = 0.0,
         measure_disruptions: bool = False,
         seed: object = None,
-        allow_rejection: bool = True,
+        allow_rejection: bool = False,
         reset: bool = True,
         channel_width: double = 12.5,
         k_paths: int = 5,
@@ -242,8 +242,6 @@ cdef class QRMSAEnv:
             self.bit_rate_provisioned_histogram = defaultdict(int)
             self.episode_bit_rate_requested_histogram = defaultdict(int)
             self.episode_bit_rate_provisioned_histogram = defaultdict(int)
-            self.slots_provisioned_histogram = defaultdict(int)
-            self.episode_slots_provisioned_histogram = defaultdict(int)
         self.topology = topology
         self.num_spectrum_resources = num_spectrum_resources
         self.episode_length = episode_length
@@ -291,24 +289,32 @@ cdef class QRMSAEnv:
         self.disrupted_services = 0
         self.episode_disrupted_services = 0
 
-        # Redefinir o espaço de ações para Discrete
-        self.action_space = gym.spaces.Discrete(
-            (self.k_paths * len(self.modulations) * self.num_spectrum_resources)+1
+        self.action_space = gym.spaces.MultiDiscrete(
+            (self.k_paths, len(self.modulations), self.frequency_vector.shape[0])
         )
 
         total_dim = (
-            1
-            + (2 * self.topology.number_of_nodes())
-            + self.k_paths
-            + (self.k_paths * len(self.modulations) * (2 * self.j + 5))
+            1  # Taxa de bits normalizada
+            + (2 * self.topology.number_of_nodes())  # Origem e destino codificados
+            + self.k_paths  # Comprimentos das rotas
+            + (self.k_paths * len(self.modulations) * (2 * self.j + 5))  # Espectro
         )
 
-        self.observation_space = gym.spaces.Box(
-                low=-10.0,
-                high=10.0,
-                shape=(total_dim,),
-                dtype=np.float32
+        # Espaço de observação como um Box contínuo
+        self.observation_space = gym.spaces.Dict({
+            'observation': gym.spaces.Box(
+                low=-10.0,  # Limite inferior, com base nas normalizações
+                high=10.0,  # Limite superior, com base nas normalizações
+                shape=(total_dim,),  # Dimensão total calculada
+                dtype=np.float32  # Tipo de dado usado na observação
+            ),
+            'mask': gym.spaces.Box(
+                low=0.0,  # Máscara de ações válidas deve estar no intervalo [0, 1]
+                high=1.0,
+                shape=(self.k_paths, len(self.modulations), self.frequency_vector.shape[0]),  # Dimensão da máscara
+                dtype=np.uint8
             )
+        })
         if seed is None:
             ss = SeedSequence()
             input_seed = int(ss.generate_state(1)[0])
@@ -346,6 +352,9 @@ cdef class QRMSAEnv:
         self.episode_bit_rate_requested = 0.0
         self.episode_bit_rate_provisioned = 0.0
         if self.bit_rate_selection == "discrete":
+            if bit_rate_probabilities is None:
+                bit_rate_probabilities = [1.0 / len(bit_rates)] * len(bit_rates)
+            self.bit_rate_probabilities = bit_rate_probabilities
             self.bit_rate_requested_histogram = defaultdict(int)
             self.bit_rate_provisioned_histogram = defaultdict(int)
             self.slots_provisioned_histogram = defaultdict(int)
@@ -353,7 +362,7 @@ cdef class QRMSAEnv:
         else:
             self.bit_rate_requested_histogram = None
             self.bit_rate_provisioned_histogram = None
-        self.reject_action = self.action_space.n - 1 if allow_rejection else 0
+        self.reject_action = 1 if allow_rejection else 0
         self.actions_output = np.zeros(
             (self.k_paths + 1, self.num_spectrum_resources + 1), dtype=np.int64
         )
@@ -376,6 +385,7 @@ cdef class QRMSAEnv:
             self.final_file_name = final_name
             self.file_stats = open(final_name, "wt", encoding="UTF-8")
 
+            # Write to the file
             self.file_stats.write("# Service stats file from simulator\n")
             self.file_stats.write("id,source,destination,bit_rate,path_k,path_length,modulation,min_osnr,osnr,ase,nli,disrupted_services\n")
         else:
@@ -412,16 +422,22 @@ cdef class QRMSAEnv:
         for modulation in self.modulations:
             self.episode_modulation_histogram[modulation.spectral_efficiency] = 0
 
-        if options is not None and "only_episode_counters" in options and options["only_episode_counters"]:
-            observation, mask = self.observation()
-            info = {}
-            return observation, info
+        if self._new_service:
+            self.episode_services_processed += 1
+            self.episode_bit_rate_requested += self.current_service.bit_rate
+            if self.bit_rate_selection == "discrete":
+                self.episode_bit_rate_requested_histogram[self.current_service.bit_rate] += 1
 
+        if options is not None and "only_episode_counters" in options and options["only_episode_counters"]:
+            return self.observation(), {}
+
+        # Reset other necessary variables
         self.bit_rate_requested = 0.0
         self.bit_rate_provisioned = 0.0
         self.disrupted_services = 0
         self.disrupted_services_list = []
 
+        # Reset topology state
         self.topology.graph["services"] = []
         self.topology.graph["running_services"] = []
         self.topology.graph["last_update"] = 0.0
@@ -452,19 +468,8 @@ cdef class QRMSAEnv:
 
         self._new_service = False
         self._next_service()
+        return self.observation(), {}
 
-        observation, mask = self.observation()
-        info = mask.copy()
-        return observation, info
-    
-    def normalize_value(self, value, min_v, max_v):
-        """
-        Normaliza um valor no intervalo [0,1]. 
-        Se max_v == min_v, retorna 0 para evitar divisão por zero.
-        """
-        if max_v == min_v:
-            return 0.0
-        return (value - min_v) / (max_v - min_v)
     
     def observation(self):
         topology = self.topology
@@ -473,88 +478,92 @@ cdef class QRMSAEnv:
         k_shortest_paths = self.k_shortest_paths
         modulations = self.modulations
         num_modulations = len(modulations)
-        num_nodes = topology.number_of_nodes()  # Exemplo
+        num_nodes = topology.number_of_nodes()
         frequency_slot_bandwidth = self.channel_width * 1e9 
 
-        # 1) Informações de source/destination em forma 2D -> flatten
+        # IDs de origem e destino
         source_id = int(current_service.source_id)
         destination_id = int(current_service.destination_id)
+
+        # Criação da matriz binária de origem e destino
         source_destination_tau = np.zeros((2, num_nodes), dtype=np.float32)
         source_destination_tau[0, source_id] = 1.0
         source_destination_tau[1, destination_id] = 1.0
 
-        # 2) Definições para rotas, blocos, etc.
-        num_paths_to_evaluate = self.k_paths
-        num_blocks_to_consider = self.j
-        num_metrics_per_modulation = 2 * num_blocks_to_consider + 5  # Ajuste se precisar
+        # Parâmetros fixos
+        num_paths_to_evaluate = self.k_paths  # Número de rotas k mais curtas a avaliar
+        num_blocks_to_consider = self.j  # Número máximo de blocos disponíveis a considerar por rota
+        num_metrics_per_modulation = 2 * num_blocks_to_consider + 5  # Métricas por modulação
 
-        # 3) Inicializa observação para espectro, com "padding" = -1.0
+        # Inicialização da observação do espectro com valores -1.0
         spectrum_obs = np.full(
             (num_paths_to_evaluate, num_modulations, num_metrics_per_modulation),
             fill_value=-1.0,
             dtype=np.float32
         )
 
-        # 4) Máscara de ações em 1D (com tamanho = action_space.n)
-        action_mask = np.zeros(self.action_space.n, dtype=np.uint8)
+        # Inicialização da máscara de ações válidas com zeros
+        action_mask = np.zeros((num_paths_to_evaluate, num_modulations, self.frequency_vector.shape[0]), dtype=np.uint8)
 
-        # 5) Estatísticas do grafo para normalização de distâncias
+        # Estatísticas da topologia para normalização
         link_lengths = [topology[x][y]["length"] for x, y in topology.edges()]
-        min_lengths = min(link_lengths)
-        max_lengths = max(link_lengths)
+        min_lenghts = min(link_lengths)
+        max_lenghts = max(link_lengths)
+        std_link_length = np.std(link_lengths)
+        std_link_length = std_link_length if std_link_length != 0 else 1.0  # Evitar divisão por zero
 
-        # 6) Ajustar normalização de blocos e bitrates
-        max_block_length = num_spectrum_resources
-        max_bit_rate = max(self.bit_rates)
+        # Valores máximos para normalização
+        max_block_length = num_spectrum_resources  # Máximo comprimento de bloco espectral
+        max_bit_rate = max(self.bit_rates)         # Taxa de bits máxima suportada
 
-        # 7) Array para guardar o comprimento das rotas (para normalização)
+        # Inicialização dos comprimentos das rotas normalizados
         route_lengths = np.zeros((num_paths_to_evaluate, 1), dtype=np.float32)
 
-        # 8) Pré-calcular bit_rate_obs (evita repetição dentro do loop)
-        bit_rate_obs = np.array([current_service.bit_rate / max_bit_rate], dtype=np.float32)
-
-        # 9) Loop principal para coletar features de cada rota e atualizar máscara
+        # Processar cada rota k mais curta
         for path_index, route in enumerate(k_shortest_paths[current_service.source, current_service.destination]):
             if path_index >= num_paths_to_evaluate:
-                break
+                break  # Considerar apenas as primeiras num_paths_to_evaluate rotas
 
-            # 9.1) Normaliza o comprimento da rota
+            # Normalização do comprimento da rota
             route_length = route.length
-            route_lengths[path_index, 0] = self.normalize_value(route_length, min_lengths, max_lengths)
+            route_lengths[path_index, 0] = self.normalize(route_length, min_lenghts, max_lenghts)
 
-            # 9.2) Slots disponíveis para a rota
-            available_slots = self.get_available_slots(route)
+            # Obter slots disponíveis para a rota
+            available_slots = self.get_available_slots(route)  # Assume que retorna um array booleano
 
-            # 9.3) Para cada modulação, computar quantos slots e se OSNR é OK
+            # Processar cada modulação disponível
             for modulation_index, modulation in enumerate(modulations):
+                # Número de slots necessários para o serviço atual com esta modulação
                 num_slots_required = self.get_number_slots(current_service, modulation)
 
-                osnr_ok = False
-                osnr_value = -1.0
+                # Inicialização dos valores de OSNR
+                osnr_ok = False  # Inicialização
+                osnr_value = -1.0  # Valor padrão em caso de falha
 
-                # 9.4) Identificação de blocos com RLE
+                # Identificar blocos disponíveis usando RLE
                 idx, values, lengths = rle(available_slots)
                 initial_indices = idx[values == 1]
                 lengths_available = lengths[values == 1]
 
+                # Filtrar blocos que possuem tamanho suficiente
                 valid_blocks = lengths_available >= num_slots_required
                 initial_indices = initial_indices[valid_blocks]
                 lengths_valid = lengths_available[valid_blocks]
 
-                # 9.5) Se houver bloco válido, calcular OSNR (por ex. do último)
+                # Se houver pelo menos um bloco válido, calcular a OSNR
                 if initial_indices.size > 0:
+                    # Selecionar o último bloco válido para calcular a OSNR 
                     initial_slot = initial_indices[-1]
                     service_bandwidth = num_slots_required * frequency_slot_bandwidth
-                    service_center_frequency = (
-                        self.frequency_start 
-                        + (frequency_slot_bandwidth * initial_slot)
-                        + (frequency_slot_bandwidth * (num_slots_required / 2.0))
+                    service_center_frequency = self.frequency_start + (
+                        frequency_slot_bandwidth * initial_slot
+                    ) + (
+                        frequency_slot_bandwidth * (num_slots_required / 2.0)
                     )
                     path_links = route.links
-                    service_id = current_service.service_id
+                    service_id = self.current_service.service_id
                     service_launch_power = 10 ** ((self.launch_power_dbm - 30) / 10)
                     gsnr_th = modulation.minimum_osnr
-
                     osnr_value = calculate_osnr_observation(
                         self,
                         path_links,
@@ -564,403 +573,193 @@ cdef class QRMSAEnv:
                         service_launch_power,
                         gsnr_th
                     )
+
+                    # Verificar se a OSNR atende ao requisito
                     if osnr_value >= 0:
                         osnr_ok = True
 
-                # 9.6) Preenche features de blocos no spectrum_obs
-                #      (para no máximo num_blocks_to_consider blocos)
-                for block_index, (start_idx, block_length) in enumerate(
-                        zip(initial_indices[:num_blocks_to_consider], lengths_valid[:num_blocks_to_consider])):
-                    
-                    # Normalização de start_idx no intervalo [-1,1], por exemplo
-                    # (mantendo a lógica original, mas avalie usar `normalize_value`)
-                    spectrum_obs[path_index, modulation_index, block_index*2] = (
-                        2 * (start_idx - 0.5 * num_spectrum_resources) / num_spectrum_resources
+                # Atualizar a observação do espectro
+                # Preencher observação do espectro (mesmo que a alocação possa não ser válida)
+                for block_index, (initial_index, block_length) in enumerate(zip(initial_indices[:num_blocks_to_consider], lengths_valid[:num_blocks_to_consider])):
+                    # Índice inicial do slot, normalizado
+                    spectrum_obs[path_index, modulation_index, block_index * 2] = (
+                        2 * (initial_index - 0.5 * num_spectrum_resources) / num_spectrum_resources
                     )
-                    # Normalização do tamanho do bloco
-                    spectrum_obs[path_index, modulation_index, block_index*2 + 1] = \
-                        self.normalize_value(block_length, num_slots_required, max_block_length)
+                    # Comprimento do bloco, normalizado
+                    spectrum_obs[path_index, modulation_index, block_index * 2 + 1] = self.normalize(block_length, max_block_length, num_slots_required)
 
-                # 9.7) Número normalizado de slots necessários
-                #      (este range pode ser ajustado para [0,1], se preferir)
-                spectrum_obs[path_index, modulation_index, num_blocks_to_consider * 2] = (
-                    (num_slots_required - 5.5) / 3.5
-                )
+                # Número normalizado de slots necessários
+                spectrum_obs[path_index, modulation_index, num_blocks_to_consider * 2] = (num_slots_required - 5.5) / 3.5
 
-                # 9.8) Proporção total de slots disponíveis
+                # Proporção total de slots disponíveis
                 total_available_slots = np.sum(available_slots)
                 total_available_slots_ratio = (
                     2 * (total_available_slots - 0.5 * num_spectrum_resources) / num_spectrum_resources
                 )
                 spectrum_obs[path_index, modulation_index, num_blocks_to_consider * 2 + 1] = total_available_slots_ratio
 
-                # 9.9) Tamanho médio dos blocos disponíveis
+                # Tamanho médio dos blocos disponíveis
                 if lengths_valid.size > 0:
-                    mean_block_size = ((np.mean(lengths_valid) - 4) / 4) / 100
+                    mean_block_size = ((np.mean(lengths_valid) - 4) / 4)/100
                     spectrum_obs[path_index, modulation_index, num_blocks_to_consider * 2 + 2] = mean_block_size
                 else:
-                    spectrum_obs[path_index, modulation_index, num_blocks_to_consider * 2 + 2] = 0.0
+                    spectrum_obs[path_index, modulation_index, num_blocks_to_consider * 2 + 2] = 0.0  # Sem blocos disponíveis
 
-                # 9.10) Armazena o valor de OSNR no spectrum_obs
+                # Cálculo da OSNR
                 spectrum_obs[path_index, modulation_index, num_blocks_to_consider * 2 + 3] = osnr_value
 
-                # 9.11) Atualiza a mask se OSNR estiver OK
+                # Atualizar a máscara de ações
                 if osnr_ok:
+                    # Encontrar todos os possíveis inícios de alocação de blocos válidos
                     available_slots_int = available_slots.astype(int)
                     window = np.ones(num_slots_required, dtype=int)
                     convolution = convolve(available_slots_int, window, mode='valid')
                     valid_start_indices = np.where(convolution == num_slots_required)[0]
-
-                    # Vetoriza a marcação na mask:
-                    # Cada (path_index, modulation_index, start_idx) corresponde a um
-                    # índice discreto no action space:
+                    # Marcar na máscara as frequências onde a alocação é possível
                     for start_idx in valid_start_indices:
-                        action_index = (
-                            path_index * num_modulations * num_spectrum_resources
-                            + modulation_index * num_spectrum_resources
-                            + start_idx
-                        )
-                        if action_index < self.action_space.n:
-                            action_mask[action_index] = 1
-                # else: se não ok, não faz nada (todos zeros no default)
+                        action_mask[path_index, modulation_index, start_idx] = 1.0
+                else:
+                    # Se OSNR não está ok, todas as frequências permanecem como 0 (já estão inicializadas)
+                    pass
+        # Observação da taxa de bits do serviço atual, normalizada
+        bit_rate_obs = np.array([[current_service.bit_rate / max_bit_rate]], dtype=np.float32)
 
-        action_mask[-1] = 1  # Último índice é a ação de rejeição
-        # 10) Monta a observação final em blocos, depois flatten
-        # Observação do bit_rate (já normalizado no [bit_rate_obs])
-        # Observação de source/destination
-        # Observação de route_lengths
-        # Observação do spectrum_obs
-        source_destination_flat = source_destination_tau.flatten().astype(np.float32)
-        route_lengths_flat = route_lengths.flatten().astype(np.float32)
-        spectrum_obs_flat = spectrum_obs.flatten().astype(np.float32)
+        # Concatenar todas as observações em um array de tamanho fixo (sem incluir a máscara)
+        observation = np.concatenate((
+            bit_rate_obs.flatten(),
+            source_destination_tau.flatten(),
+            route_lengths.flatten(),
+            spectrum_obs.flatten()
+        ), axis=0)
 
-        observation = np.concatenate([
-            bit_rate_obs,
-            source_destination_flat,
-            route_lengths_flat,
-            spectrum_obs_flat
-        ], axis=0).astype(np.float32)
+        # Garantir que a observação tenha o tipo correto
+        observation = observation.astype(np.float32)
 
-        # Retorna o array da observação e o dicionário contendo a máscara
-        return observation, {'mask': action_mask}
+        return {'observation': observation, 'mask': action_mask}
 
-        """
-            def observation(self):
-                topology = self.topology
-                current_service = self.current_service
-                num_spectrum_resources = self.num_spectrum_resources
-                k_shortest_paths = self.k_shortest_paths
-                modulations = self.modulations
-                num_modulations = len(modulations)
-                num_nodes = topology.number_of_nodes()
-                frequency_slot_bandwidth = self.channel_width * 1e9 
 
-                source_id = int(current_service.source_id)
-                destination_id = int(current_service.destination_id)
-
-                source_destination_tau = np.zeros((2, num_nodes), dtype=np.float32)
-                source_destination_tau[0, source_id] = 1.0
-                source_destination_tau[1, destination_id] = 1.0
-
-                num_paths_to_evaluate = self.k_paths
-                num_blocks_to_consider = self.j
-                num_metrics_per_modulation = 2 * num_blocks_to_consider + 5
-
-                spectrum_obs = np.full(
-                    (num_paths_to_evaluate, num_modulations, num_metrics_per_modulation),
-                    fill_value=-1.0,
-                    dtype=np.float32
-                )
-
-                # Redefinir a máscara como um vetor 1D
-                action_mask = np.zeros(self.action_space.n, dtype=np.uint8)
-
-                link_lengths = [topology[x][y]["length"] for x, y in topology.edges()]
-                min_lengths = min(link_lengths)
-                max_lengths = max(link_lengths)
-                std_link_length = np.std(link_lengths)
-                std_link_length = std_link_length if std_link_length != 0 else 1.0
-
-                max_block_length = num_spectrum_resources
-                max_bit_rate = max(self.bit_rates)
-
-                route_lengths = np.zeros((num_paths_to_evaluate, 1), dtype=np.float32)
-
-                for path_index, route in enumerate(k_shortest_paths[current_service.source, current_service.destination]):
-                    if path_index >= num_paths_to_evaluate:
-                        break
-
-                    route_length = route.length
-                    route_lengths[path_index, 0] = self.normalize(route_length, min_lengths, max_lengths)
-
-                    available_slots = self.get_available_slots(route)
-
-                    for modulation_index, modulation in enumerate(modulations):
-                        num_slots_required = self.get_number_slots(current_service, modulation)
-
-                        osnr_ok = False
-                        osnr_value = -1.0
-
-                        idx, values, lengths = rle(available_slots)
-                        initial_indices = idx[values == 1]
-                        lengths_available = lengths[values == 1]
-
-                        valid_blocks = lengths_available >= num_slots_required
-                        initial_indices = initial_indices[valid_blocks]
-                        lengths_valid = lengths_available[valid_blocks]
-
-                        if initial_indices.size > 0:
-                            initial_slot = initial_indices[-1]
-                            service_bandwidth = num_slots_required * frequency_slot_bandwidth
-                            service_center_frequency = self.frequency_start + (
-                                frequency_slot_bandwidth * initial_slot
-                            ) + (
-                                frequency_slot_bandwidth * (num_slots_required / 2.0)
-                            )
-                            path_links = route.links
-                            service_id = self.current_service.service_id
-                            service_launch_power = 10 ** ((self.launch_power_dbm - 30) / 10)
-                            gsnr_th = modulation.minimum_osnr
-                            osnr_value = calculate_osnr_observation(
-                                self,
-                                path_links,
-                                service_bandwidth,
-                                service_center_frequency,
-                                service_id,
-                                service_launch_power,
-                                gsnr_th
-                            )
-
-                            if osnr_value >= 0:
-                                osnr_ok = True
-
-                        for block_index, (initial_index, block_length) in enumerate(zip(initial_indices[:num_blocks_to_consider], lengths_valid[:num_blocks_to_consider])):
-                            spectrum_obs[path_index, modulation_index, block_index * 2] = (
-                                2 * (initial_index - 0.5 * num_spectrum_resources) / num_spectrum_resources
-                            )
-                            spectrum_obs[path_index, modulation_index, block_index * 2 + 1] = self.normalize(block_length, max_block_length, num_slots_required)
-
-                        spectrum_obs[path_index, modulation_index, num_blocks_to_consider * 2] = (num_slots_required - 5.5) / 3.5
-
-                        total_available_slots = np.sum(available_slots)
-                        total_available_slots_ratio = (
-                            2 * (total_available_slots - 0.5 * num_spectrum_resources) / num_spectrum_resources
-                        )
-                        spectrum_obs[path_index, modulation_index, num_blocks_to_consider * 2 + 1] = total_available_slots_ratio
-
-                        if lengths_valid.size > 0:
-                            mean_block_size = ((np.mean(lengths_valid) - 4) / 4)/100
-                            spectrum_obs[path_index, modulation_index, num_blocks_to_consider * 2 + 2] = mean_block_size
-                        else:
-                            spectrum_obs[path_index, modulation_index, num_blocks_to_consider * 2 + 2] = 0.0
-
-                        spectrum_obs[path_index, modulation_index, num_blocks_to_consider * 2 + 3] = osnr_value
-
-                        if osnr_ok:
-                            available_slots_int = available_slots.astype(int)
-                            window = np.ones(num_slots_required, dtype=int)
-                            convolution = convolve(available_slots_int, window, mode='valid')
-                            valid_start_indices = np.where(convolution == num_slots_required)[0]
-                            for start_idx in valid_start_indices:
-                                action_index = (
-                                    path_index * len(modulations) * self.num_spectrum_resources +
-                                    modulation_index * self.num_spectrum_resources +
-                                    start_idx
-                                )
-                                if action_index < sum(self.action_space.n):
-                                    action_mask[action_index] = 1
-                        else:
-                            pass
-
-                bit_rate_obs = np.array([[current_service.bit_rate / max_bit_rate]], dtype=np.float32)
-
-                observation = np.concatenate((
-                    bit_rate_obs.flatten(),
-                    source_destination_tau.flatten(),
-                    route_lengths.flatten(),
-                    spectrum_obs.flatten()
-                ), axis=0)
-
-                observation = observation.astype(np.float32)
-
-                return observation, {'mask': action_mask}
-        """
-    
-    def decimal_to_array(self, decimal: int, max_values: list[int]) -> list[int]:
-        """
-        Converte um valor decimal (int) para um array de índices [i0, i1, i2,...],
-        de acordo com 'max_values'.
+        # available_slots = self.topology.graph["available_slots"]
+        # running_services = self.topology.graph["running_services"]
         
-        max_values é algo como [k_paths, num_modulations, num_spectrum_resources].
-        A ordem em que você vai 'desempacotar' precisa ser
-        a mesma usada para 'flatten' a ação na hora de criar a máscara.
-        """
-        array = []
-        for max_val in reversed(max_values):
-            array.insert(0, decimal % max_val)
-            decimal //= max_val
-        return array
+        # # Create a padded array to store service IDs
+        # padded_running_services = np.full((1000,), fill_value=-1, dtype=int)
+        
+        # # Extract the service_id from each Service object and store it in the array
+        # service_ids = [service.service_id for service in running_services[:1000]]
+        
+        # # Store the service IDs in the padded array
+        # padded_running_services[:len(service_ids)] = service_ids
 
-    cpdef tuple[object, float, bint, bint, dict] step(self, int action):
-        """
-        Executa uma ação no ambiente. A ação agora pode ser:
-        - Qualquer combinação (route, modulation_index, initial_slot) que caiba em
-            self.k_paths * len(self.modulations) * self.num_spectrum_resources
-        - OU a ação de rejeição (índice final)
-        """
+        # return {
+        #     "topology": available_slots,
+        #     "running-services": padded_running_services
+        # }
 
-        cdef int route = -1
-        cdef int modulation_idx = -1
-        cdef int initial_slot = -1
-        cdef int number_slots = 0
 
-        cdef double osnr = 0.0
-        cdef double ase = 0.0
-        cdef double nli = 0.0
-        cdef double osnr_req = 0.0   # Osnr mínimo requerido pela modulação (minimum_osnr)
-
+    cpdef tuple[object, float, bint, bint, dict] step(self, cnp.ndarray action):
+        cdef int route
+        cdef object modulation
+        cdef int modulation_index
+        cdef int initial_slot
+        cdef int number_slots
+        cdef double osnr, ase, nli
+        cdef int disrupted_services = 0
+        cdef object path
+        cdef list services_to_measure = []
+        cdef object link
+        cdef object service
+        cdef dict info
+        cdef str line
+        cdef str key
         cdef bint truncated = False
         cdef bint terminated
-        cdef int disrupted_services = 0
+        if action is not None:
+            # Unpack the action tuple
+            route = int(action[0])
+            modulation_index = int(action[1])
+            modulation = self.modulations[modulation_index]
+            initial_slot = int(action[2])
 
-        cdef object modulation = None
-        cdef object path = None
-        cdef list services_to_measure = []
-        cdef dict info
+            # Get the modulation object
+            modulation = self.modulations[modulation_index]
 
-        # Reset das flags de bloqueio do serviço atual, para depois definir corretamente
-        self.current_service.blocked_due_to_resources = False
-        self.current_service.blocked_due_to_osnr = False
-
-        # -------------------------------------------------------------------------
-        # 1) Verificar se a ação é a de rejeição
-        #    Lembre-se: action_space = (k_paths * len(modulations) * num_spectrum_resources) + 1
-        #    => O último índice (== self.action_space.n - 1) é a rejeição.
-        # -------------------------------------------------------------------------
-        if action == (self.action_space.n - 1):
-            # Ação de rejeição
-            self.current_service.accepted = False
-            self.current_service.blocked_due_to_resources = False
-            self.current_service.blocked_due_to_osnr = False
-        else:
-            # ---------------------------------------------------------------------
-            # 2) Decodificar a ação numérica em (route, modulation_idx, slot)
-            # ---------------------------------------------------------------------
-            decoded = self.decimal_to_array(
-                action,
-                [self.k_paths, len(self.modulations), self.num_spectrum_resources]
-            )
-            route = decoded[0]
-            modulation_idx = decoded[1]
-            initial_slot = decoded[2]
-
-            modulation = self.modulations[modulation_idx]
-            osnr_req = modulation.minimum_osnr + self.margin  # OSNR mínimo + margin
-
-            # ---------------------------------------------------------------------
-            # 3) Obter o path correspondente
-            # ---------------------------------------------------------------------
-            path = self.k_shortest_paths[
-                self.current_service.source,
-                self.current_service.destination
-            ][route]
-
-            # ---------------------------------------------------------------------
-            # 4) Calcular quantos slots são necessários
-            # ---------------------------------------------------------------------
+            # Get the path based on the route index
+            path = self.k_shortest_paths[self.current_service.source, self.current_service.destination][route]
+            # Calculate the number of slots required
             number_slots = self.get_number_slots(
                 service=self.current_service,
-                modulation=modulation
+                modulation=modulation,
             )
-
-            # ---------------------------------------------------------------------
-            # 5) Verificar recursos (slots) disponíveis
-            # ---------------------------------------------------------------------
-            if self.is_path_free(path=path, initial_slot=initial_slot, number_slots=number_slots):
-                # Tentar alocar
+            # Check if the path is free for the given slots
+            path_free_bool = self.is_path_free(path=path, initial_slot=initial_slot, number_slots=number_slots)
+            if path_free_bool:
                 self.current_service.path = path
                 self.current_service.initial_slot = initial_slot
                 self.current_service.number_slots = number_slots
-                self.current_service.center_frequency = (
-                    self.frequency_start
-                    + (self.frequency_slot_bandwidth * initial_slot)
-                    + (self.frequency_slot_bandwidth * (number_slots / 2.0))
-                )
+                self.current_service.center_frequency = self.frequency_start + \
+                    (self.frequency_slot_bandwidth * initial_slot) + \
+                    (self.frequency_slot_bandwidth * (number_slots / 2.0))
                 self.current_service.bandwidth = self.frequency_slot_bandwidth * number_slots
                 self.current_service.launch_power = self.launch_power
 
-                # -----------------------------------------------------------------
-                # 6) Calcular OSNR, checar se atende ao mínimo
-                # -----------------------------------------------------------------
+                # Calculate OSNR, ASE, and NLI
                 osnr, ase, nli = calculate_osnr(self, self.current_service)
-                if osnr >= osnr_req:
-                    # Serviço aceito
-                    self.current_service.accepted = True
+
+                # Check if OSNR meets the required minimum
+                if osnr >= modulation.minimum_osnr + self.margin:
                     self.current_service.OSNR = osnr
                     self.current_service.ASE = ase
                     self.current_service.NLI = nli
+                    if self.current_service.service_id > self.episode_length:
+                        self.max_gsnr = max(self.max_gsnr, osnr)
+                        self.min_gsnr = min(self.min_gsnr, osnr)
+
                     self.current_service.current_modulation = modulation
+                    self.episode_modulation_histogram[
+                        modulation.spectral_efficiency
+                    ] += 1
 
-                    # Atualiza histograma de modulações
-                    self.episode_modulation_histogram[modulation.spectral_efficiency] += 1
+                    self._provision_path(
+                        path,
+                        initial_slot,
+                        number_slots,
+                    )
 
-                    # Provisionar o path
-                    self._provision_path(path, initial_slot, number_slots)
+                    self.current_service.accepted = True
 
-                    # Caso use bit_rate_selection discreto
                     if self.bit_rate_selection == "discrete":
-                        self.slots_provisioned_histogram[number_slots] += 1
+                        # If discrete bit rate is being used
+                        self.slots_provisioned_histogram[number_slots] += 1  # Update histogram
 
-                    # Evento de liberação no futuro
                     self._add_release(self.current_service)
-
                 else:
-                    # Bloqueado por OSNR
                     self.current_service.accepted = False
-                    self.current_service.blocked_due_to_osnr = True
-            else:
-                # Bloqueado por recursos
-                self.current_service.accepted = False
-                self.current_service.blocked_due_to_resources = True
+        else:
+            self.current_service.accepted = False
+        # Initialize disrupted services count
+        disrupted_services = 0
 
-        # -------------------------------------------------------------------------
-        # 7) Se aceito, verificar "disrupted_services" (opcional)
-        # -------------------------------------------------------------------------
+        # Check for service disruptions
         if self.measure_disruptions and self.current_service.accepted:
             services_to_measure = []
-            for link in self.current_service.path.links:
-                for service_in_link in self.topology[link.node1][link.node2]["running_services"]:
-                    if (service_in_link not in services_to_measure
-                            and service_in_link not in self.disrupted_services_list):
-                        services_to_measure.append(service_in_link)
 
-            for svc in services_to_measure:
-                osnr_svc, ase_svc, nli_svc = calculate_osnr(self, svc)
-                if osnr_svc < svc.current_modulation.minimum_osnr:
+            for link in self.current_service.path.links:
+                for service in self.topology[link.node1][link.node2]["running_services"]:
+                    if service not in services_to_measure and service not in self.disrupted_services_list:
+                        services_to_measure.append(service)
+
+            for service in services_to_measure:
+                osnr, ase, nli = calculate_osnr(self, service)
+                if osnr < service.current_modulation.minimum_osnr:
                     disrupted_services += 1
-                    if svc not in self.disrupted_services_list:
+                    if service not in self.disrupted_services_list:
                         self.disrupted_services += 1
                         self.episode_disrupted_services += 1
-                        self.disrupted_services_list.append(svc)
+                        self.disrupted_services_list.append(service)
 
-        # -------------------------------------------------------------------------
-        # 8) Se não aceito, incrementa a contagem da ação "default" em actions_taken
-        # -------------------------------------------------------------------------
+        # Handle the case when the service is not accepted
         if not self.current_service.accepted:
-            # Repare que agora a rejeição pode ser ou a ação "explícita"
-            # ou a falha em alocar recursos/OSNR. Ajuste conforme sua lógica.
-            # Exemplo: atualizar estatística do “reject action” se for de fato a index final:
-            if action == (self.action_space.n - 1):
-                # Rejeição explícita
-                # Se você mantiver a matriz actions_taken com shape
-                # (k_paths+1, num_spectrum_resources+1), pode ser que precise
-                # adaptá-la para ter espaço p/ rejeição. Este é apenas um exemplo:
-                self.actions_taken[self.k_paths, self.num_spectrum_resources] += 1
-            else:
-                # Bloqueado por alguma razão (recursos/OSNR)
-                self.actions_taken[self.k_paths, self.num_spectrum_resources] += 1
-
-            # Zera informações do serviço
+            self.actions_taken[self.k_paths, self.num_spectrum_resources] += 1
             self.current_service.path = None
             self.current_service.initial_slot = -1
             self.current_service.number_slots = 0
@@ -968,35 +767,10 @@ cdef class QRMSAEnv:
             self.current_service.ASE = 0.0
             self.current_service.NLI = 0.0
 
-        # -------------------------------------------------------------------------
-        # 9) Debug / Print
-        # -------------------------------------------------------------------------
-        # print(f"\n--- STEP DEBUG ---")
-        # print(f"Action: {action} (Route={route}, Mod={modulation_idx}, Slot={initial_slot})")
-        # print(f"Service ID: {self.current_service.service_id}")
-        # print(f"Accepted: {self.current_service.accepted}")
-        # print(f"Blocked (resources): {self.current_service.blocked_due_to_resources}")
-        # print(f"Blocked (OSNR): {self.current_service.blocked_due_to_osnr}")
-        # print(f"Allocated path index: {route}")
-        # print(f"Allocated slot: {initial_slot}")
-        # print(f"Number of slots: {number_slots}")
-        # print(f"OSNR obtido: {osnr:.2f}, OSNR req: {osnr_req:.2f}")
-        # print(f"Bit rate requested (atual): {self.current_service.bit_rate:.2f}")
-        # print(f"Bit rate provisioned (cumulativo): {self.bit_rate_provisioned:.2f}")
-        # print(f"Episode services processed: {self.episode_services_processed}")
-        # print(f"Episode services accepted: {self.episode_services_accepted}")
-        # print(f"Episode bit rate requested: {self.episode_bit_rate_requested:.2f}")
-        # print(f"Episode bit rate provisioned: {self.episode_bit_rate_provisioned:.2f}")
-
-        # Se quiser exibir alguma info da topologia:
-        # print(f"Topology edges: {list(self.topology.edges(data=True))}")
-
-        # Adiciona este serviço atual ao grafo
+        # Append the current service to the services list
         self.topology.graph["services"].append(self.current_service)
 
-        # -------------------------------------------------------------------------
-        # 10) Registrar estatísticas em arquivo (opcional)
-        # -------------------------------------------------------------------------
+        # Writing statistics to file if file_stats is enabled
         if self.file_stats is not None:
             line = "{},{},{},{},".format(
                 self.current_service.service_id,
@@ -1020,13 +794,9 @@ cdef class QRMSAEnv:
             line += "\n"
             self.file_stats.write(line)
 
-        # -------------------------------------------------------------------------
-        # 11) Calcular a recompensa e montar 'info'
-        # -------------------------------------------------------------------------
-        if not action == (self.action_space.n - 1):
-            reward = self.reward()
-        else:
-            reward = -1.0
+        # Generate statistics for the episode info
+        reward = self.reward()
+
         info = {
             "episode_services_accepted": self.episode_services_accepted,
             "service_blocking_rate": 0.0,
@@ -1035,15 +805,9 @@ cdef class QRMSAEnv:
             "episode_bit_rate_blocking_rate": 0.0,
             "disrupted_services": 0.0,
             "episode_disrupted_services": 0.0,
-
-            # Métricas adicionais:
-            "osnr": osnr,
-            "osnr_req": osnr_req,
-            "chosen_path_index": route,
-            "chosen_slot": initial_slot,
         }
 
-        # Taxas de bloqueio (serviço e bit_rate)
+        # Cálculos das taxas de bloqueio
         if self.services_processed > 0:
             info["service_blocking_rate"] = (
                 self.services_processed - self.services_accepted
@@ -1051,9 +815,9 @@ cdef class QRMSAEnv:
 
         if self.episode_services_processed > 0:
             info["episode_service_blocking_rate"] = (
-                float(self.episode_services_processed - self.episode_services_accepted)
-            ) / float(self.episode_services_processed)
-        print(f"services_processed: {self.services_processed}, services_accepted: {self.services_accepted}, episode_services_processed: {self.episode_services_processed}, episode_services_accepted: {self.episode_services_accepted}, episode_service_blocking_rate: {info['episode_service_blocking_rate']}")
+                self.episode_services_processed - self.episode_services_accepted
+            ) / self.episode_services_processed
+
         if self.bit_rate_requested > 0:
             info["bit_rate_blocking_rate"] = (
                 self.bit_rate_requested - self.bit_rate_provisioned
@@ -1072,30 +836,27 @@ cdef class QRMSAEnv:
                 self.episode_disrupted_services / self.episode_services_accepted
             )
 
-        # Contagens de modulação
-        cdef float spectral_eff
+        # Atualização das contagens de modulação
         for current_modulation in self.modulations:
             spectral_eff = current_modulation.spectral_efficiency
-            key = "modulation_{}".format(str(spectral_eff))
+            key = "modulation_{}".format(str(spectral_eff))  # Converter para string se necessário
             if spectral_eff in self.episode_modulation_histogram:
                 info[key] = self.episode_modulation_histogram[spectral_eff]
             else:
-                info[key] = 0
+                print(f"Warning: spectral_efficiency {spectral_eff} not found in histogram.")
+                info[key] = 0  # Valor padrão ou outro tratamento adequado
 
-        # -------------------------------------------------------------------------
-        # 12) Preparar para o próximo serviço
-        # -------------------------------------------------------------------------
+        # Preparar para o próximo serviço
         self._new_service = False
         self._next_service()
-
-        # Fim do episódio?
-        terminated = (self.episode_services_processed == self.episode_length)
-
-        observation, mask = self.observation()
-        info.update(mask)
-
-        return (observation, reward, terminated, truncated, info)
-
+        terminated = self.episode_services_processed == self.episode_length
+        return (
+            self.observation(),
+            reward,
+            terminated,
+            truncated,
+            info,
+        )
 
     cpdef _next_service(self):
         """
@@ -1347,7 +1108,6 @@ cdef class QRMSAEnv:
 
         self.services_accepted += 1
         self.episode_services_accepted += 1
-
         self.bit_rate_provisioned += self.current_service.bit_rate
         self.episode_bit_rate_provisioned = <cnp.int64_t>(
             self.episode_bit_rate_provisioned + self.current_service.bit_rate
@@ -1612,3 +1372,6 @@ cdef class QRMSAEnv:
 
     def close(self):
         return super().close()
+    
+    def normalize(self, x, x_min, x_max):
+        return ((x - x_min) / (x_max - x_min)) * 2 - 1
