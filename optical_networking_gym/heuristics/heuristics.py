@@ -60,26 +60,29 @@ def shortest_available_path_first_fit_best_modulation(
         Optional[int]: Índice da ação correspondente, ou a ação de rejeição se permitido, ou None.
     """
     qrmsa_env: QRMSAEnv = get_qrmsa_env(env)  # Descompactar o ambiente
+    bl_resource = True
+    bl_osnr = False
     
     for idp, path in enumerate(qrmsa_env.k_shortest_paths[
         qrmsa_env.current_service.source,
         qrmsa_env.current_service.destination,
     ]):
         available_slots = qrmsa_env.get_available_slots(path)
+        # print(f"Available slots: {available_slots}")
+        # print(env.topology)
         for idm, modulation in zip(range(len(qrmsa_env.modulations) - 1, -1, -1), reversed(qrmsa_env.modulations)):  # da melhor para a pior
-            number_slots = qrmsa_env.get_number_slots(qrmsa_env.current_service, modulation) + 2  # +2 para guard band
+            number_slots = qrmsa_env.get_number_slots(qrmsa_env.current_service, modulation)# para guard band
 
             initial_indices, values, lengths = rle(available_slots)
 
-            sufficient_indices = np.where(lengths >= number_slots)
+            sufficient_indices = np.where(lengths >= (number_slots+1))
             available_indices = np.where(values == 1)
             final_indices = np.intersect1d(available_indices, sufficient_indices)
 
             if final_indices.size > 0:  # há slots disponíveis
+                bl_resource = False
                 qrmsa_env.current_service.blocked_due_to_resources = False
                 initial_slot = initial_indices[final_indices][0]  # first fit
-                if initial_slot > 0:
-                    initial_slot += 1  # guard band
 
                 # Atualizar parâmetros do serviço
                 qrmsa_env.current_service.path = path
@@ -92,14 +95,34 @@ def shortest_available_path_first_fit_best_modulation(
                 qrmsa_env.current_service.launch_power = qrmsa_env.launch_power
 
                 # Calcular OSNR
-                osnr, _, _ = calculate_osnr(qrmsa_env, qrmsa_env.current_service)
+                # print("DEBUG HEURÍSTICA: Entrada para cálculo do OSNR")
+                # print(f"Service ID: {qrmsa_env.current_service.service_id}")
+                # print(f"Path: {[link.node1 + '-' + link.node2 for link in path.links]}")
+                # print(f"Initial Slot: {initial_slot}")
+                # print(f"Number of Slots: {number_slots}")
+                # print(f"Launch Power: {qrmsa_env.current_service.launch_power}")
+                # print(f"Bandwidth: {qrmsa_env.current_service.bandwidth}")
+                # print(f"Center Frequency: {qrmsa_env.current_service.center_frequency}")
+                # print(f"Topologia (serviços rodando):")
+                # for link in path.links:
+                #     running_services = qrmsa_env.topology[link.node1][link.node2]["running_services"]
+                #     for svc in running_services:
+                #         print(f"  - Service ID: {svc.service_id}, Center Frequency: {svc.center_frequency}, Bandwidth: {svc.bandwidth}, number_slots: {svc.number_slots}, initial_slot: {svc.initial_slot}")
+                # print("Chamando calculate_osnr...")
+                osnr, ase, nli = calculate_osnr(qrmsa_env, qrmsa_env.current_service)
+                # print(f"DEBUG HEURÍSTICA: Saída do cálculo do OSNR")
+                # print(f"OSNR calculado: {osnr}")
+                # print(f"ASE calculado: {ase}")
+                # print(f"NLI calculado: {nli}")
                 if osnr >= modulation.minimum_osnr + qrmsa_env.margin:
+                    bl_osnr = False
                     # Converter para índice de ação
                     action = get_action_index(qrmsa_env, idp, idm, initial_slot)
-                    return action
-
+                    return action, bl_osnr, bl_resource
+                else:
+                    bl_osnr = True
     # Se nenhuma ação válida encontrada, retornar a ação de rejeição se permitido
-    return qrmsa_env.reject_action
+    return qrmsa_env.reject_action, bl_osnr, bl_resource
     # if qrmsa_env.allow_rejection:
     #     return qrmsa_env.reject_action
     # else:
@@ -191,18 +214,16 @@ def best_modulation_load_balancing(
             qrmsa_env.current_service.destination,
         ]):
             available_slots = qrmsa_env.get_available_slots(path)
-            number_slots = qrmsa_env.get_number_slots(qrmsa_env.current_service, modulation) + 2  # +2 para guard band
+            number_slots = qrmsa_env.get_number_slots(qrmsa_env.current_service, modulation)  # +2 para guard band
 
             initial_indices, values, lengths = rle(available_slots)
-            sufficient_indices = np.where(lengths >= number_slots)
+            sufficient_indices = np.where(lengths >= number_slots+1)
             available_indices = np.where(values == 1)
             final_indices = np.intersect1d(available_indices, sufficient_indices)
 
             if final_indices.size > 0:
                 qrmsa_env.current_service.blocked_due_to_resources = False
                 initial_slot = initial_indices[final_indices][0]
-                if initial_slot > 0:
-                    initial_slot += 1  # guard band
 
                 # Atualizar parâmetros do serviço
                 qrmsa_env.current_service.path = path
@@ -222,10 +243,7 @@ def best_modulation_load_balancing(
                     return action
 
     # Se nenhuma ação válida encontrada, retornar a ação de rejeição se permitido
-    if qrmsa_env.allow_rejection:
-        return qrmsa_env.reject_action
-    else:
-        return None  # ou uma ação padrão específica
+    return qrmsa_env.reject_action
 
 def load_balancing_best_modulation(
     env: Env,

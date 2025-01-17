@@ -1,3 +1,4 @@
+from datetime import datetime
 import os
 import random
 import numpy as np
@@ -43,7 +44,7 @@ class CSVLoggerCallback(BaseCallback):
     """
     Logs episode info to a CSV file.
     """
-    def __init__(self, csv_path: str = "./episode_logs/episode_info.csv", verbose=0):
+    def __init__(self, csv_path: str = f"./episode_logs/episode_info_.csv", verbose=0):
         super().__init__(verbose)
         self.csv_path = csv_path
         self.csv_file = None
@@ -358,8 +359,10 @@ def main():
         policy_kwargs=policy_kwargs,
         tensorboard_log="./ppo_masked_tensorboard/"
     )
-
-    csv_logger_callback = CSVLoggerCallback(csv_path="./episode_logs/episode_info.csv", verbose=1)
+    
+    current_date_time = datetime.now().strftime("%Y-%m-%d_%H-%M")
+    filename = f"./episode_logs/episode_info_{current_date_time}.csv"
+    csv_logger_callback = CSVLoggerCallback(csv_path=filename, verbose=1)
     tensorboard_info_callback = TensorBoardInfoLoggerCallback(verbose=1)  
 
     model.learn(
