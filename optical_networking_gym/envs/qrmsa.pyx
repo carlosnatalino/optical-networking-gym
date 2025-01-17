@@ -920,8 +920,6 @@ cdef class QRMSAEnv:
                     self._add_release(self.current_service)
 
                 else:
-                    if osnr < osnr_req*0.9:
-                        raise ValueError("OSNR abaixo do mínimo requerido.")
                     self.current_service.accepted = False
                     self.current_service.blocked_due_to_osnr = True
                     self.bl_osnr += 1
@@ -1099,21 +1097,9 @@ cdef class QRMSAEnv:
         # Fim do episódio?
         terminated = (self.episode_services_processed == self.episode_length)
         if terminated:
-            for service in self.topology.graph["running_services"]:
-                print(f"Service {service.service_id} - Path: {service.path} - Slot: {service.initial_slot} - Number of slots: {service.number_slots} - Bit rate: {service.bit_rate} - OSNR: {service.OSNR} - Accepted: {service.accepted}")
-            print("\n")
-            print("\n")
-            print("\n")
-            print("\n")
-            print("\n")
-            print("\n")
-            print("\n")
-            print("====================== EPISODE ENDED ======================")
-            print(f"Episode services processed: {self.episode_services_processed}")
-            print(f"Episode services accepted: {self.episode_services_accepted}")
-            print(f"services blocked due to resources: {self.bl_resource}")
-            print(f"services blocked due to OSNR: {self.bl_osnr}")
-            print(f"services rejected: {self.bl_reject}")
+            info["blocked_due_to_resources"] = self.bl_resource
+            info["blocked_due_to_osnr"] = self.bl_osnr
+            info["rejected"] = self.bl_reject
 
         observation, mask = self.observation()
         info.update(mask)
@@ -1281,11 +1267,11 @@ cdef class QRMSAEnv:
                 ]
                 == 0
             ):
-                print(self.topology.graph["available_slots"][
-                    self.topology[path.node_list[i]][path.node_list[i + 1]]["index"]])
-                print(f"\n \n Service: {self.current_service} \n \n")
-                print(f"number_slots: {number_slots} \n end: {end} \n")
-                raise ValueError(f"Path is not free {self.topology.graph['available_slots'][self.topology[path.node_list[i]][path.node_list[i + 1]]['index'],start : end]}")
+#                print(self.topology.graph["available_slots"][
+#                    self.topology[path.node_list[i]][path.node_list[i + 1]]["index"]])
+#                print(f"\n \n Service: {self.current_service} \n \n")
+#                print(f"number_slots: {number_slots} \n end: {end} \n")
+#                raise ValueError(f"Path is not free {self.topology.graph['available_slots'][self.topology[path.node_list[i]][path.node_list[i + 1]]['index'],start : end]}")
                 return False
         return True
 
@@ -1344,14 +1330,6 @@ cdef class QRMSAEnv:
         for i in range(path_length - 1):
             # Get the link index
             link_index = self.topology[node_list[i]][node_list[i + 1]]["index"]
-
-            if any(self.topology.graph["available_slots"][
-                link_index,
-                start_slot:end_slot
-            ] == 0):
-                raise ValueError(
-                    f"Link {node_list[i]}-{node_list[i + 1]} has not enough capacity on slots {start_slot}-{end_slot}"
-                )
             # Update available slots
             self.topology.graph["available_slots"][
                 link_index,
