@@ -185,6 +185,9 @@ cdef class QRMSAEnv:
     cdef object file_stats
     cdef unicode final_file_name
     cdef int j
+    cdef int bl_resource 
+    cdef int bl_osnr 
+    cdef int bl_reject
 
     topology: cython.declare(nx.Graph, visibility="readonly")
     bit_rate_selection: cython.declare(Literal["continuous", "discrete"], visibility="readonly")
@@ -381,6 +384,9 @@ cdef class QRMSAEnv:
         else:
             self.file_stats = None
 
+        self.bl_osnr = 0
+        self.bl_resource = 0
+        self.bl_reject = 0
         if reset:
             self.reset()
 
@@ -808,7 +814,6 @@ cdef class QRMSAEnv:
             self.k_paths * len(self.modulations) * self.num_spectrum_resources
         - OU a ação de rejeição (índice final)
         """
-
         cdef int route = -1
         cdef int modulation_idx = -1
         cdef int initial_slot = -1
@@ -842,6 +847,7 @@ cdef class QRMSAEnv:
             self.current_service.accepted = False
             self.current_service.blocked_due_to_resources = False
             self.current_service.blocked_due_to_osnr = False
+            self.bl_reject+=1
         else:
             # ---------------------------------------------------------------------
             # 2) Decodificar a ação numérica em (route, modulation_idx, slot)
@@ -853,7 +859,6 @@ cdef class QRMSAEnv:
             route = decoded[0]
             modulation_idx = decoded[1]
             initial_slot = decoded[2]
-
             modulation = self.modulations[modulation_idx]
             osnr_req = modulation.minimum_osnr + self.margin  # OSNR mínimo + margin
 
@@ -915,13 +920,16 @@ cdef class QRMSAEnv:
                     self._add_release(self.current_service)
 
                 else:
-                    # Bloqueado por OSNR
+                    if osnr < osnr_req*0.9:
+                        raise ValueError("OSNR abaixo do mínimo requerido.")
                     self.current_service.accepted = False
                     self.current_service.blocked_due_to_osnr = True
+                    self.bl_osnr += 1
             else:
                 # Bloqueado por recursos
                 self.current_service.accepted = False
                 self.current_service.blocked_due_to_resources = True
+                self.bl_resource += 1
 
         # -------------------------------------------------------------------------
         # 7) Se aceito, verificar "disrupted_services" (opcional)
@@ -1053,6 +1061,7 @@ cdef class QRMSAEnv:
             info["episode_service_blocking_rate"] = (
                 float(self.episode_services_processed - self.episode_services_accepted)
             ) / float(self.episode_services_processed)
+#        print(f"services_processed: {self.services_processed}, services_accepted: {self.services_accepted}, episode_services_processed: {self.episode_services_processed}, episode_services_accepted: {self.episode_services_accepted}, episode_service_blocking_rate: {info['episode_service_blocking_rate']}")
         if self.bit_rate_requested > 0:
             info["bit_rate_blocking_rate"] = (
                 self.bit_rate_requested - self.bit_rate_provisioned
@@ -1090,8 +1099,22 @@ cdef class QRMSAEnv:
         # Fim do episódio?
         terminated = (self.episode_services_processed == self.episode_length)
         if terminated:
-            print(f"services_processed: {self.services_processed}, services_accepted: {self.services_accepted}, episode_services_processed: {self.episode_services_processed}, episode_services_accepted: {self.episode_services_accepted}, episode_service_blocking_rate: {info['episode_service_blocking_rate']}")
-            
+            for service in self.topology.graph["running_services"]:
+                print(f"Service {service.service_id} - Path: {service.path} - Slot: {service.initial_slot} - Number of slots: {service.number_slots} - Bit rate: {service.bit_rate} - OSNR: {service.OSNR} - Accepted: {service.accepted}")
+            print("\n")
+            print("\n")
+            print("\n")
+            print("\n")
+            print("\n")
+            print("\n")
+            print("\n")
+            print("====================== EPISODE ENDED ======================")
+            print(f"Episode services processed: {self.episode_services_processed}")
+            print(f"Episode services accepted: {self.episode_services_accepted}")
+            print(f"services blocked due to resources: {self.bl_resource}")
+            print(f"services blocked due to OSNR: {self.bl_osnr}")
+            print(f"services rejected: {self.bl_reject}")
+
         observation, mask = self.observation()
         info.update(mask)
 
@@ -1233,49 +1256,37 @@ cdef class QRMSAEnv:
     cpdef int get_number_slots(self, object service, object modulation):
             """
             Computes the number of spectrum slots necessary to accommodate the service request into the path.
-            Adds the guardband.
             """
             cdef double required_slots
             required_slots = service.bit_rate / (modulation.spectral_efficiency * self.channel_width)
             return int(math.ceil(required_slots))
 
 
-    cpdef bint is_path_free(self, object path, int initial_slot, int number_slots):
-        cdef int start, end, i, num_nodes, link_index
-        cdef int num_spectrum_resources = self.num_spectrum_resources
-        cdef cnp.ndarray[cnp.int32_t, ndim=2] available_slots_np = self.topology.graph["available_slots"]
-        cdef cnp.int32_t[:, :] available_slots = available_slots_np  # Typed memoryview
-        cdef cnp.int32_t[:] slots
-        cdef Py_ssize_t slot_idx, num_slots
-
-        if initial_slot + number_slots > num_spectrum_resources:
+    def is_path_free(self, path: Path, initial_slot: int, number_slots: int) -> bool:
+        if initial_slot + number_slots  > self.num_spectrum_resources:
+            # logging.debug('error index' + env.parameters.rsa_algorithm)
             return False
-
-        # Considerando a guard band
+        # considering the guard band
+        start = 0
         if initial_slot > 0:
-            start = initial_slot - 1
-        else:
-            start = 0
-
-        end = initial_slot + number_slots + 1
-        if end == num_spectrum_resources:
+            start = initial_slot 
+        end = initial_slot + number_slots+ 1
+        if end == self.num_spectrum_resources:
             end -= 1
-        cdef tuple node_list = path.get_node_list()
-        num_nodes = len(node_list)
-        for i in range(num_nodes - 1):
-            # Obtendo o índice do link
-            link_data = self.topology[node_list[i]][node_list[i + 1]]
-            link_index = link_data["index"]
-
-            # Obtendo os slots como um memoryview para melhorar a performance
-            slots = available_slots[link_index, start:end]
-            num_slots = slots.shape[0]
-
-            # Verificando se algum slot está ocupado (igual a 0)
-            for slot_idx in range(num_slots):
-                if slots[slot_idx] == 0:
-                    return False
-
+        for i in range(len(path.node_list) - 1):
+            if np.any(
+                self.topology.graph["available_slots"][
+                    self.topology[path.node_list[i]][path.node_list[i + 1]]["index"],
+                    start : end
+                ]
+                == 0
+            ):
+                print(self.topology.graph["available_slots"][
+                    self.topology[path.node_list[i]][path.node_list[i + 1]]["index"]])
+                print(f"\n \n Service: {self.current_service} \n \n")
+                print(f"number_slots: {number_slots} \n end: {end} \n")
+                raise ValueError(f"Path is not free {self.topology.graph['available_slots'][self.topology[path.node_list[i]][path.node_list[i + 1]]['index'],start : end]}")
+                return False
         return True
 
     cpdef double reward(self):
@@ -1318,7 +1329,8 @@ cdef class QRMSAEnv:
         cdef int end_slot = start_slot + number_slots
         cdef tuple node_list = path.get_node_list() 
         cdef object link  # Replace with appropriate type if possible
-
+        if end_slot < self.num_spectrum_resources:
+            end_slot+=1
         # Check if the path is free
         if not self.is_path_free(path, initial_slot, number_slots):
             available_slots = self.get_available_slots(path)
@@ -1333,6 +1345,13 @@ cdef class QRMSAEnv:
             # Get the link index
             link_index = self.topology[node_list[i]][node_list[i + 1]]["index"]
 
+            if any(self.topology.graph["available_slots"][
+                link_index,
+                start_slot:end_slot
+            ] == 0):
+                raise ValueError(
+                    f"Link {node_list[i]}-{node_list[i + 1]} has not enough capacity on slots {start_slot}-{end_slot}"
+                )
             # Update available slots
             self.topology.graph["available_slots"][
                 link_index,
@@ -1387,37 +1406,28 @@ cdef class QRMSAEnv:
         release_time = service.arrival_time + service.holding_time
         heapq.heappush(self._events, (release_time, service.service_id, service))
     
-    cpdef _release_path(self, Service service):
-        cdef int i, link_index
-        cdef int initial_slot = service.initial_slot
-        cdef int number_slots = service.number_slots
-        cdef tuple node_list = service.path.node_list  # Assuming node_list is a tuple or list
-
-        # Iterate over each link in the service's path (node_list)
-        for i in range(len(node_list) - 1):
-            # Get the index of the link between node i and node i+1
-            link_index = self.topology[node_list[i]][node_list[i + 1]]["index"]
-
-            # Free the spectrum slots that were allocated to this service
+    def _release_path(self, service: Service):
+        for i in range(len(service.path.node_list) - 1):
             self.topology.graph["available_slots"][
-                link_index,
-                initial_slot : initial_slot + number_slots
+                self.topology[service.path.node_list[i]][service.path.node_list[i + 1]][
+                    "index"
+                ],
+                service.initial_slot : service.initial_slot + service.number_slots+1,
             ] = 1
-
-            # Mark the spectrum slots as unallocated (-1)
             self.spectrum_slots_allocation[
-                link_index,
-                initial_slot : initial_slot + number_slots
+                self.topology[service.path.node_list[i]][service.path.node_list[i + 1]][
+                    "index"
+                ],
+                service.initial_slot : service.initial_slot + service.number_slots+1,
             ] = -1
-
-            # Remove the service from the running services on this link
-            self.topology[node_list[i]][node_list[i + 1]]["running_services"].remove(service)
-
-            # Update link statistics after releasing the service
-            self._update_link_stats(node_list[i], node_list[i + 1])
-
-        # Remove the service from the global list of running services
+            self.topology[service.path.node_list[i]][service.path.node_list[i + 1]][
+                "running_services"
+            ].remove(service)
+            self._update_link_stats(
+                service.path.node_list[i], service.path.node_list[i + 1]
+            )
         self.topology.graph["running_services"].remove(service)
+
 
     cpdef _update_link_stats(self, str node1, str node2):
         # Declare todas as variáveis 'cdef' no início da função
