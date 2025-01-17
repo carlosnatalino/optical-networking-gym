@@ -543,7 +543,7 @@ cdef class QRMSAEnv:
                 initial_indices = idx[values == 1]
                 lengths_available = lengths[values == 1]
 
-                valid_blocks = lengths_available >= num_slots_required
+                valid_blocks = lengths_available >= num_slots_required+1
                 initial_indices = initial_indices[valid_blocks]
                 lengths_valid = lengths_available[valid_blocks]
 
