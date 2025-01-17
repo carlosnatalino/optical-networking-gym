@@ -1053,7 +1053,6 @@ cdef class QRMSAEnv:
             info["episode_service_blocking_rate"] = (
                 float(self.episode_services_processed - self.episode_services_accepted)
             ) / float(self.episode_services_processed)
-        print(f"services_processed: {self.services_processed}, services_accepted: {self.services_accepted}, episode_services_processed: {self.episode_services_processed}, episode_services_accepted: {self.episode_services_accepted}, episode_service_blocking_rate: {info['episode_service_blocking_rate']}")
         if self.bit_rate_requested > 0:
             info["bit_rate_blocking_rate"] = (
                 self.bit_rate_requested - self.bit_rate_provisioned
@@ -1090,7 +1089,9 @@ cdef class QRMSAEnv:
 
         # Fim do episódio?
         terminated = (self.episode_services_processed == self.episode_length)
-
+        if terminated:
+            print(f"services_processed: {self.services_processed}, services_accepted: {self.services_accepted}, episode_services_processed: {self.episode_services_processed}, episode_services_accepted: {self.episode_services_accepted}, episode_service_blocking_rate: {info['episode_service_blocking_rate']}")
+            
         observation, mask = self.observation()
         info.update(mask)
 
@@ -1278,22 +1279,38 @@ cdef class QRMSAEnv:
         return True
 
     cpdef double reward(self):
-        cdef double osnr, min_osnr, osnr_diff, numerator, log_value, reward_value
-        cdef bint accepted
-
-        accepted = self.current_service.accepted
+        cdef bint accepted = self.current_service.accepted
         if not accepted:
-            return 0.0
+            return ( -(float(self.episode_services_processed - self.episode_services_accepted)
+            ) / float(self.episode_services_processed))
 
-        osnr = self.current_service.OSNR
-        min_osnr = self.current_service.current_modulation.minimum_osnr
+        # Recupera parâmetros do serviço
+        cdef double osnr = self.current_service.OSNR
+        cdef double min_osnr = self.current_service.current_modulation.minimum_osnr
+        cdef double osnr_diff = osnr - min_osnr
+        cdef double se = self.current_service.current_modulation.spectral_efficiency
 
-        osnr_diff = osnr - min_osnr
-        numerator = 1.0 + osnr_diff
-        log_value = log10(numerator)
-        reward_value = 1.0 - log_value / 1.6
+        # Cálculo simples:
+        #
+        #    reward = 1.0
+        #            - α * |osnr_diff|    [penaliza sobras de OSNR]
+        #            + β * se            [recompensa maior eficiência espectral]
+        #
+        # Clampa para [0,1] ao final.
+
+        cdef double alpha = 0.25 #Penaliza quanto maior for a diferença entre a OSNR real e a mínima necessária.
+        cdef double beta = 0.1 #Recompensa modulações com maior eficiência espectral.
+
+        cdef double reward_value = 1.0 - alpha * abs(osnr_diff) + beta * se
+
+        # Mantém a recompensa entre 0 e 1
+        if reward_value > 1.0:
+            reward_value = 1.0
+        elif reward_value < 0.0:
+            reward_value = 0.0
 
         return reward_value
+
     
     cpdef _provision_path(self, object path, cnp.int64_t initial_slot, int number_slots):
         cdef int i, path_length, link_index
@@ -1567,8 +1584,8 @@ cdef class QRMSAEnv:
         cdef list indices
         cdef cnp.ndarray available_slots_matrix
         cdef cnp.ndarray product
-        cdef long[:, :] slots_view
-        cdef long[:] product_view
+        cdef int[:, :] slots_view
+        cdef int[:] product_view
         cdef Py_ssize_t num_rows, num_cols
 
         n = len(node_list) - 1

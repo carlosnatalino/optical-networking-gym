@@ -1,8 +1,5 @@
-import csv
-from datetime import datetime
 import os
 import random
-import time
 import numpy as np
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -30,6 +27,9 @@ from optical_networking_gym.topology import Modulation, get_topology
 
 from typing import Tuple
 
+import csv
+import threading
+
 # 1. Define Modulations
 def define_modulations() -> Tuple[Modulation, ...]:
     return (
@@ -46,9 +46,10 @@ class CSVLoggerCallback(BaseCallback):
     """
     Logs episode info to a CSV file.
     """
-    def __init__(self, csv_path: str = f"./episode_logs/episode_info.csv", verbose=0):
+    def __init__(self, csv_path: str = "./episode_logs/episode_info.csv", verbose=0):
         super().__init__(verbose)
         self.csv_path = csv_path
+        self.lock = threading.Lock()
         self.csv_file = None
         self.csv_writer = None
         self.file_initialized = False
@@ -63,36 +64,34 @@ class CSVLoggerCallback(BaseCallback):
         infos = self.locals.get("infos", [])
         dones = self.locals.get("dones", [])
 
-        for done, info in zip(dones, infos):
-            if done:
-                print("episiodio completo")
-                episode_info = info.get("episode", {})
-                row_dict = {
-                    "episode_reward": episode_info.get("r", 0),
-                    "episode_length": episode_info.get("l", 0),
-                    "bit_rate_blocking_rate": info.get("episode_bit_rate_blocking_rate", 0),
-                    "service_blocking_rate": info.get("episode_service_blocking_rate", 0),
-                    "modulation_1.0": info.get("modulation_1.0", 0),
-                    "modulation_2.0": info.get("modulation_2.0", 0),
-                    "modulation_3.0": info.get("modulation_3.0", 0),
-                    "modulation_4.0": info.get("modulation_4.0", 0),
-                    "modulation_5.0": info.get("modulation_5.0", 0),
-                    "modulation_6.0": info.get("modulation_6.0", 0),               
-                }
-                if not self.file_initialized:
-                    import csv
-                    headers = list(row_dict.keys())
-                    self.csv_writer = csv.DictWriter(self.csv_file, fieldnames=headers)
-                    self.csv_writer.writeheader()
-                    self.file_initialized = True
-                self.csv_writer.writerow(row_dict)
-                self.csv_file.flush()
+        with self.lock:
+            for done, info in zip(dones, infos):
+                if done:
+                    episode_info = info.get("episode", {})
+                    row_dict = {
+                        "episode_reward": episode_info.get("r", 0),
+                        "episode_length": episode_info.get("l", 0),
+                        "bit_rate_blocking_rate": info.get("episode_bit_rate_blocking_rate", 0),
+                        "service_blocking_rate": info.get("episode_service_blocking_rate", 0),
+                        "modulation_1.0": info.get("modulation_1.0", 0),
+                        "modulation_2.0": info.get("modulation_2.0", 0),
+                        "modulation_3.0": info.get("modulation_3.0", 0),
+                        "modulation_4.0": info.get("modulation_4.0", 0),
+                        "modulation_5.0": info.get("modulation_5.0", 0),
+                        "modulation_6.0": info.get("modulation_6.0", 0),               
+                    }
+                    if not self.file_initialized:
+                        headers = list(row_dict.keys())
+                        self.csv_writer = csv.DictWriter(self.csv_file, fieldnames=headers)
+                        self.csv_writer.writeheader()
+                        self.file_initialized = True
+                    self.csv_writer.writerow(row_dict)
+                    self.csv_file.flush()
         return True
 
     def _on_training_end(self):
         if self.csv_file:
             self.csv_file.close()
-
 
 class TensorBoardInfoLoggerCallback(BaseCallback):
     """
@@ -148,7 +147,6 @@ class TensorBoardInfoLoggerCallback(BaseCallback):
     def _on_training_end(self):
         pass
 
-
 class EntropyCoefficientScheduler(BaseCallback):
     """
     Linearly adjusts ent_coef from an initial to a final value.
@@ -166,7 +164,6 @@ class EntropyCoefficientScheduler(BaseCallback):
         if self.verbose > 0:
             self.logger.record("entropy_coefficient", self.model.ent_coef)
         return True
-
 
 class StopTrainingOnEpisodesCallback(BaseCallback):
     """
@@ -186,31 +183,6 @@ class StopTrainingOnEpisodesCallback(BaseCallback):
         if self.n_episodes >= self.max_episodes:
             print(f"Stopping training at {self.n_episodes} episodes.")
             return False
-        return True
-
-
-class StepLoggerCallback(BaseCallback):
-    """
-    Logs information every N steps, incluindo o objeto 'info' do ambiente.
-    """
-    def __init__(self, log_freq: int, verbose=0):
-        super(StepLoggerCallback, self).__init__(verbose)
-        self.log_freq = log_freq
-        self.steps = 0
-
-    def _on_step(self) -> bool:
-        self.steps += 1
-        if self.steps % self.log_freq == 0:
-            # Acessa o objeto 'infos' do ambiente
-            infos = self.locals.get('infos', [])
-            
-            # Itera sobre cada 'info' em ambientes paralelos
-            for idx, info in enumerate(infos):
-                print(f"Passo: {self.steps}, Ambiente {idx} Info: {info}")
-            
-            # Opcional: Imprimir o número total de timesteps
-            print(f"Passos: {self.steps}, Timesteps Totais: {self.model.num_timesteps}")
-        
         return True
 
 class ExplorationBoostCallback(BaseCallback):
@@ -248,74 +220,6 @@ class ExplorationBoostCallback(BaseCallback):
             self.last_mean = current_mean
 
         return True
-    
-
-class EpisodeTimerCallback(BaseCallback):
-    """
-    Callback personalizado para medir e registrar o tempo de execução de cada episódio.
-    """
-    def __init__(self, csv_path: str = "./episode_logs/episode_timing.csv", log_to_console: bool = True, verbose: int = 0):
-        super(EpisodeTimerCallback, self).__init__(verbose)
-        self.csv_path = csv_path
-        self.log_to_console = log_to_console
-        self.start_times = []  # Lista para armazenar o tempo de início por ambiente
-        self.file_initialized = False
-
-    def _on_training_start(self) -> None:
-        """
-        Inicializa os tempos de início para cada ambiente no início do treinamento.
-        """
-        num_envs = self.training_env.num_envs
-        self.start_times = [time.time() for _ in range(num_envs)]
-
-        # Configurar o arquivo CSV
-        # os.makedirs(os.path.dirname(self.csv_path), exist_ok=True)
-        # with open(self.csv_path, mode='w', newline='', encoding='utf-8') as csv_file:
-        #     fieldnames = ['env_id', 'episode_number', 'execution_time_seconds']
-        #     writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
-        #     writer.writeheader()
-        if self.verbose > 0:
-            print(f"[EpisodeTimerCallback] Iniciado. Tempo de início registrado para {num_envs} ambientes.")
-
-    def _on_step(self) -> bool:
-        """
-        Verifica se um episódio terminou em cada ambiente e registra o tempo de execução.
-        """
-        dones = self.locals.get('dones', [])
-        infos = self.locals.get('infos', [])
-
-        for env_idx, (done, info) in enumerate(zip(dones, infos)):
-            if done:
-                end_time = time.time()
-                execution_time = end_time - self.start_times[env_idx]
-                self.start_times[env_idx] = end_time  # Atualiza o tempo de início para o próximo episódio
-
-                # Extrair o número do episódio se disponível
-                episode_info = info.get('episode', {})
-                episode_number = episode_info.get('l', 'N/A')  # 'l' pode ser usado como número do episódio
-
-                # Registrar no CSV
-                # with open(self.csv_path, mode='a', newline='', encoding='utf-8') as csv_file:
-                #     writer = csv.DictWriter(csv_file, fieldnames=['env_id', 'episode_number', 'execution_time_seconds'])
-                #     writer.writerow({
-                #         'env_id': env_idx,
-                #         'episode_number': episode_number,
-                #         'execution_time_seconds': round(execution_time, 2)
-                #     })
-
-                # Logar no console se solicitado
-                if self.log_to_console:
-                    print(f"[EpisodeTimerCallback] Ambiente {env_idx} - Episódio {episode_number} concluído em {round(execution_time, 2)} segundos.")
-
-        return True  # Continua o treinamento
-
-    def _on_training_end(self) -> None:
-        """
-        Finaliza o callback ao término do treinamento.
-        """
-        if self.verbose > 0:
-            print(f"[EpisodeTimerCallback] Treinamento finalizado. Tempos de execução registrados em '{self.csv_path}'.")
-
 
 # 3. Helper functions for env creation
 def make_env(env_id, rank, seed, env_args):
@@ -323,26 +227,34 @@ def make_env(env_id, rank, seed, env_args):
     Creates an environment instance.
     """
     def _init():
-        env = gym.make(env_id, **env_args)
-        env.reset(seed=seed + rank)
-        env = ActionMaskWrapper(env)
-        env = Monitor(env)
-        return env
+        try:
+            env = gym.make(env_id, **env_args)
+            env.reset(seed=seed + rank)
+            env = ActionMaskWrapper(env)
+            env = Monitor(env)
+            print(f"Ambiente {rank} inicializado com sucesso.")
+            return env
+        except Exception as e:
+            print(f"Erro ao inicializar o ambiente {rank}: {e}")
+            raise
     return _init
-
 
 def make_test_env(env_id, seed, env_args):
     """
     Creates a test environment instance.
     """
     def _init():
-        env = gym.make(env_id, **env_args)
-        env.reset(seed=seed)
-        env = ActionMaskWrapper(env)
-        env = Monitor(env)
-        return env
+        try:
+            env = gym.make(env_id, **env_args)
+            env.reset(seed=seed)
+            env = ActionMaskWrapper(env)
+            env = Monitor(env)
+            print("Ambiente de teste inicializado com sucesso.")
+            return env
+        except Exception as e:
+            print(f"Erro ao inicializar o ambiente de teste: {e}")
+            raise
     return _init
-
 
 # 4. Main training function
 def main():
@@ -362,16 +274,6 @@ def main():
         5
     )
 
-    # # Plot the topology (optional)
-    # plt.figure(figsize=(15, 10))
-    # pos = nx.spring_layout(topology, k=0.5, seed=42)
-    # nx.draw(topology, pos, with_labels=True, node_color="skyblue", edge_color="gray", node_size=3000)
-    # edge_labels = nx.get_edge_attributes(topology, "length")
-    # nx.draw_networkx_edge_labels(topology, pos, edge_labels=edge_labels, font_color="red")
-    # plt.title(str(topology.name).upper())
-    # plt.axis("off")
-    # plt.show()
-
     # (3) Setup
     seed = 10
     random.seed(seed)
@@ -385,7 +287,7 @@ def main():
     frequency_slot_bandwidth = 12.5e9
     frequency_start = 3e8 / 1565e-9
     bandwidth = num_slots * frequency_slot_bandwidth
-    bit_rates = (10, 40, 100, 400)
+    bit_rates = (10, 40, 80, 100, 400)
 
     env_args = dict(
         topology=topology,
@@ -407,30 +309,31 @@ def main():
     )
 
     # (4) Vectorized Environment
-    num_envs = 14
+    num_envs = 4  # Inicialmente, use menos ambientes para facilitar a depuração
     env_id = "QRMSAEnvWrapper-v0"
-    vec_env = SubprocVecEnv([make_env(env_id, i, seed, env_args) for i in range(num_envs)])
+
+    # Tente inicialmente com DummyVecEnv
+    vec_env = DummyVecEnv([make_env(env_id, i, seed, env_args) for i in range(num_envs)])
 
     # (5) Callbacks
+    eval_env = DummyVecEnv([make_test_env(env_id, seed, env_args)])
     eval_callback = MaskableEvalCallback(
-        eval_env=vec_env,
+        eval_env=eval_env,
         best_model_save_path="./logs_best_model/",
         log_path="./logs_eval/",
-        eval_freq=5000,
+        eval_freq=500,
         deterministic=True,
         render=False
     )
     ent_scheduler = EntropyCoefficientScheduler(
-        initial_ent_coef=0.03,
+        initial_ent_coef=0.05,
         final_ent_coef=0.01,
         schedule_timesteps=1500000,
         verbose=1
     )
-    stop_training_callback = StopTrainingOnEpisodesCallback(max_episodes=1000, verbose=1)
+    stop_training_callback = StopTrainingOnEpisodesCallback(max_episodes=20, verbose=1)
     exploration_boost_callback = ExplorationBoostCallback(check_interval=15, threshold=0.01, verbose=1)
-    step_logger_callback = StepLoggerCallback(log_freq=10000, verbose=1)
-    episode_timer_callback = EpisodeTimerCallback(csv_path="./episode_logs/episode_timing.csv", log_to_console=True, verbose=1)
-    
+
     def linear_schedule(initial_value: float):
         def func(progress_remaining: float):
             return progress_remaining * initial_value
@@ -438,10 +341,10 @@ def main():
 
     # (6) Create and train the model
     policy_kwargs = dict(
-                     net_arch=dict(pi=[512, 256, 128], vf=[512, 256, 128]))
-    
+        net_arch=dict(pi=[512, 256, 128], vf=[512, 256, 128])
+    )
+
     model = MaskablePPO(
-        device="cuda",
         policy="MlpPolicy",
         env=vec_env,
         learning_rate=linear_schedule(3e-4),
@@ -449,32 +352,31 @@ def main():
         batch_size=256,
         gamma=0.99,
         gae_lambda=0.95,
-        ent_coef=0.03,
+        ent_coef=0.03,  # será atualizado pelo scheduler
         clip_range=0.2,
         verbose=1,
         seed=42,
         policy_kwargs=policy_kwargs,
         tensorboard_log="./ppo_masked_tensorboard/"
     )
-    current_date_time = datetime.now().strftime("%Y-%m-%d_%H-%M")
 
-    filename = f"./episode_logs/episode_info_{current_date_time}.csv"
-    csv_logger_callback = CSVLoggerCallback(csv_path=filename, verbose=1)
+    csv_logger_callback = CSVLoggerCallback(csv_path="./episode_logs/episode_info.csv", verbose=1)
     tensorboard_info_callback = TensorBoardInfoLoggerCallback(verbose=1)  
 
-    model.learn(
-        total_timesteps=int(9e200),
-        callback=[
-            stop_training_callback,
-            eval_callback,
-            ent_scheduler,
-            exploration_boost_callback,
-            csv_logger_callback,
-            tensorboard_info_callback,
-            step_logger_callback,
-            episode_timer_callback
-        ]
-    )
+    try:
+        model.learn(
+            total_timesteps=int(1e6),  # Reduza temporariamente para facilitar a depuração
+            callback=[
+                stop_training_callback,
+                eval_callback,
+                ent_scheduler,
+                exploration_boost_callback,
+                csv_logger_callback,
+                tensorboard_info_callback
+            ]
+        )
+    except Exception as e:
+        print(f"Erro durante o treinamento: {e}")
 
     model.save("ppo_masked_final.zip")
     print("Training finished. Model saved as 'ppo_masked_final.zip'.")
@@ -494,9 +396,7 @@ def main():
     #     print(f"Episode {ep+1} reward: {total_r}")
     #     obs = test_env.reset()
 
-
 if __name__ == '__main__':
     import multiprocessing
-    multiprocessing.set_start_method("spawn")
-    multiprocessing.freeze_support()  # Needed on Windows
+    multiprocessing.set_start_method("spawn")  # Tente com 'spawn'
     main()
