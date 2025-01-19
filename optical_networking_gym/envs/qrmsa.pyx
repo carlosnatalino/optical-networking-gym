@@ -176,7 +176,7 @@ cdef class QRMSAEnv:
     cdef object actions_output
     cdef object actions_taken
     cdef bint _new_service
-    cdef double current_time
+    cdef public double current_time
     cdef double mean_service_inter_arrival_time
     cdef public object frequency_vector
     cdef object rng
@@ -184,7 +184,7 @@ cdef class QRMSAEnv:
     cdef list _events
     cdef object file_stats
     cdef unicode final_file_name
-    cdef int j
+    cdef int blocks_to_consider
     cdef int bl_resource 
     cdef int bl_osnr 
     cdef int bl_reject
@@ -218,9 +218,10 @@ cdef class QRMSAEnv:
         channel_width: double = 12.5,
         k_paths: int = 5,
         file_name: str = "",
-        j: int = 4
+        blocks_to_consider: int = 4
     ):
         self.rng = random.Random()
+        self.blocks_to_consider = blocks_to_consider
         self.mean_service_inter_arrival_time = 0
         self.set_load(load=load, mean_service_holding_time=mean_service_holding_time)
         self.bit_rate_selection = bit_rate_selection
@@ -303,7 +304,7 @@ cdef class QRMSAEnv:
             1
             + (2 * self.topology.number_of_nodes())
             + self.k_paths
-            + (self.k_paths * len(self.modulations) * (2 * self.j + 5))
+            + (self.k_paths * len(self.modulations) * (2 * self.blocks_to_consider + 5))
         )
 
         self.observation_space = gym.spaces.Box(
@@ -473,53 +474,61 @@ cdef class QRMSAEnv:
         return (value - min_v) / (max_v - min_v)
     
     def observation(self):
+
+        # --- 1) Leitura de variáveis externas (mantendo nomes originais) ---
         topology = self.topology
         current_service = self.current_service
         num_spectrum_resources = self.num_spectrum_resources
+        print("num_spectrum_resources:", num_spectrum_resources)
         k_shortest_paths = self.k_shortest_paths
+        print("k_shortest_paths:", k_shortest_paths)
         modulations = self.modulations
         num_modulations = len(modulations)
-        num_nodes = topology.number_of_nodes()  # Exemplo
-        frequency_slot_bandwidth = self.channel_width * 1e9 
+        num_nodes = topology.number_of_nodes()
+        print("num_nodes:", num_nodes)  
+        frequency_slot_bandwidth = self.channel_width * 1e9
+        max_block_length = num_spectrum_resources
+        max_bit_rate = max(self.bit_rates)
 
-        # 1) Informações de source/destination em forma 2D -> flatten
+        # --- 2) Fonte/destino em one-hot 2D -> flatten ---
         source_id = int(current_service.source_id)
         destination_id = int(current_service.destination_id)
         source_destination_tau = np.zeros((2, num_nodes), dtype=np.float32)
         source_destination_tau[0, source_id] = 1.0
         source_destination_tau[1, destination_id] = 1.0
 
-        # 2) Definições para rotas, blocos, etc.
+        # --- 3) Definições para rotas e blocos ---
         num_paths_to_evaluate = self.k_paths
-        num_blocks_to_consider = self.j
-        num_metrics_per_modulation = 2 * num_blocks_to_consider + 5  # Ajuste se precisar
+        print("num_paths_to_evaluate:", num_paths_to_evaluate)
+        num_blocks_to_consider = self.blocks_to_consider
+        print("num_blocks_to_consider:", num_blocks_to_consider)
 
-        # 3) Inicializa observação para espectro, com "padding" = -1.0
+        # Observamos, por exemplo, 2 feature slots por bloco (início, comprimento),
+        # mais 5 métricas (slots necessários, slots livres, tamanho médio, OSNR e etc.)
+        num_metrics_per_modulation = 2 * num_blocks_to_consider + 5
+
+        # --- 4) Estrutura para armazenar espectro (com padding = -1.0) ---
         spectrum_obs = np.full(
             (num_paths_to_evaluate, num_modulations, num_metrics_per_modulation),
             fill_value=-1.0,
             dtype=np.float32
         )
 
-        # 4) Máscara de ações em 1D (com tamanho = action_space.n)
+        # --- 5) Máscara de ações (1D) ---
         action_mask = np.zeros(self.action_space.n, dtype=np.uint8)
 
-        # 5) Estatísticas do grafo para normalização de distâncias
+        # --- 6) Estatísticas do grafo para normalização de comprimentos ---
         link_lengths = [topology[x][y]["length"] for x, y in topology.edges()]
         min_lengths = min(link_lengths)
         max_lengths = max(link_lengths)
 
-        # 6) Ajustar normalização de blocos e bitrates
-        max_block_length = num_spectrum_resources
-        max_bit_rate = max(self.bit_rates)
-
-        # 7) Array para guardar o comprimento das rotas (para normalização)
+        # --- 7) Array para guardar o comprimento das rotas (normalizado) ---
         route_lengths = np.zeros((num_paths_to_evaluate, 1), dtype=np.float32)
 
-        # 8) Pré-calcular bit_rate_obs (evita repetição dentro do loop)
+        # --- 8) Normaliza o bit rate do serviço atual ---
         bit_rate_obs = np.array([current_service.bit_rate / max_bit_rate], dtype=np.float32)
 
-        # 9) Loop principal para coletar features de cada rota e atualizar máscara
+        # --- 9) Loop principal: coleta features de cada rota e atualiza mask ---
         for path_index, route in enumerate(k_shortest_paths[current_service.source, current_service.destination]):
             if path_index >= num_paths_to_evaluate:
                 break
@@ -528,39 +537,40 @@ cdef class QRMSAEnv:
             route_length = route.length
             route_lengths[path_index, 0] = self.normalize_value(route_length, min_lengths, max_lengths)
 
-            # 9.2) Slots disponíveis para a rota
+            # 9.2) Checa slots disponíveis nessa rota
             available_slots = self.get_available_slots(route)
 
-            # 9.3) Para cada modulação, computar quantos slots e se OSNR é OK
+            # 9.3) Para cada modulação, calcular quantos slots e verificar OSNR
             for modulation_index, modulation in enumerate(modulations):
                 num_slots_required = self.get_number_slots(current_service, modulation)
 
-                osnr_ok = False
-                osnr_value = -1.0
-
-                # 9.4) Identificação de blocos com RLE
+                # 9.4) Identificar possíveis blocos com RLE
                 idx, values, lengths = rle(available_slots)
                 initial_indices = idx[values == 1]
                 lengths_available = lengths[values == 1]
 
-                valid_blocks = lengths_available >= num_slots_required+1
+                valid_blocks = lengths_available >= (num_slots_required + 1)
                 initial_indices = initial_indices[valid_blocks]
                 lengths_valid = lengths_available[valid_blocks]
 
-                # 9.5) Se houver bloco válido, calcular OSNR (por ex. do último)
+                # 9.5) Calcula OSNR no primeiro bloco válido (se existir)
+                osnr_value = -1.0
+                osnr_ok = False
+
                 if initial_indices.size > 0:
-                    initial_slot = initial_indices[-1]
+                    initial_slot = initial_indices[0]
                     service_bandwidth = num_slots_required * frequency_slot_bandwidth
                     service_center_frequency = (
-                        self.frequency_start 
+                        self.frequency_start
                         + (frequency_slot_bandwidth * initial_slot)
                         + (frequency_slot_bandwidth * (num_slots_required / 2.0))
                     )
                     path_links = route.links
                     service_id = current_service.service_id
                     service_launch_power = 10 ** ((self.launch_power_dbm - 30) / 10)
-                    gsnr_th = modulation.minimum_osnr
+                    gsnr_th = modulation.minimum_osnr  # Limiar de OSNR
 
+                    # Faz o cálculo de OSNR
                     osnr_value = calculate_osnr_observation(
                         self,
                         path_links,
@@ -570,56 +580,61 @@ cdef class QRMSAEnv:
                         service_launch_power,
                         gsnr_th
                     )
-                    if osnr_value >= 0:
-                        osnr_ok = True
 
-                # 9.6) Preenche features de blocos no spectrum_obs
-                #      (para no máximo num_blocks_to_consider blocos)
+                    # 9.5.1) Agora, normalizamos a OSNR e comparamos com 0.8 do limiar
+                    #        Se osnr_value < 0, significa que o cálculo retornou inviável.
+                    if osnr_value >= -0.2:
+                            osnr_ok = True
+                            osnr_normalized = osnr_value
+
+                else:
+                    osnr_normalized = 0.0  # Sem blocos disponíveis
+
+                # 9.6) Preenche features de blocos (até blocks_to_consider blocos)
                 for block_index, (start_idx, block_length) in enumerate(
-                        zip(initial_indices[:num_blocks_to_consider], lengths_valid[:num_blocks_to_consider])):
-                    
-                    # Normalização de start_idx no intervalo [-1,1], por exemplo
-                    # (mantendo a lógica original, mas avalie usar `normalize_value`)
-                    spectrum_obs[path_index, modulation_index, block_index*2] = (
-                        2 * (start_idx - 0.5 * num_spectrum_resources) / num_spectrum_resources
+                    zip(initial_indices[:num_blocks_to_consider], lengths_valid[:num_blocks_to_consider])
+                ):
+                    # Normalização do índice de início de bloco para [-1, 1]
+                    spectrum_obs[path_index, modulation_index, block_index * 2] = (
+                        2.0 * (start_idx - 0.5 * num_spectrum_resources) / num_spectrum_resources
                     )
-                    # Normalização do tamanho do bloco
-                    spectrum_obs[path_index, modulation_index, block_index*2 + 1] = \
-                        self.normalize_value(block_length, num_slots_required, max_block_length)
 
-                # 9.7) Número normalizado de slots necessários
-                #      (este range pode ser ajustado para [0,1], se preferir)
+                    # Normalização do tamanho do bloco no intervalo [num_slots_required, max_block_length]
+                    spectrum_obs[path_index, modulation_index, block_index * 2 + 1] = self.normalize_value(
+                        block_length,
+                        num_slots_required,
+                        max_block_length
+                    )
+
+                # 9.7) Número de slots requeridos (ajustado para um range adequado)
                 spectrum_obs[path_index, modulation_index, num_blocks_to_consider * 2] = (
                     (num_slots_required - 5.5) / 3.5
                 )
 
-                # 9.8) Proporção total de slots disponíveis
+                # 9.8) Proporção total de slots disponíveis ([-1, 1])
                 total_available_slots = np.sum(available_slots)
                 total_available_slots_ratio = (
-                    2 * (total_available_slots - 0.5 * num_spectrum_resources) / num_spectrum_resources
+                    2.0 * (total_available_slots - 0.5 * num_spectrum_resources) / num_spectrum_resources
                 )
                 spectrum_obs[path_index, modulation_index, num_blocks_to_consider * 2 + 1] = total_available_slots_ratio
 
-                # 9.9) Tamanho médio dos blocos disponíveis
+                # 9.9) Tamanho médio dos blocos disponíveis (exemplo de normalização)
                 if lengths_valid.size > 0:
-                    mean_block_size = ((np.mean(lengths_valid) - 4) / 4) / 100
-                    spectrum_obs[path_index, modulation_index, num_blocks_to_consider * 2 + 2] = mean_block_size
+                    mean_block_size = ((np.mean(lengths_valid) - 4.0) / 4.0) / 100.0
                 else:
-                    spectrum_obs[path_index, modulation_index, num_blocks_to_consider * 2 + 2] = 0.0
+                    mean_block_size = 0.0
+                spectrum_obs[path_index, modulation_index, num_blocks_to_consider * 2 + 2] = mean_block_size
 
-                # 9.10) Armazena o valor de OSNR no spectrum_obs
-                spectrum_obs[path_index, modulation_index, num_blocks_to_consider * 2 + 3] = osnr_value
+                # 9.10) Armazena OSNR normalizada no spectrum_obs
+                spectrum_obs[path_index, modulation_index, num_blocks_to_consider * 2 + 3] = osnr_normalized
 
-                # 9.11) Atualiza a mask se OSNR estiver OK
+                # 9.11) Se osnr_ok for True, atualiza máscara de ações
                 if osnr_ok:
                     available_slots_int = available_slots.astype(int)
                     window = np.ones(num_slots_required, dtype=int)
                     convolution = convolve(available_slots_int, window, mode='valid')
                     valid_start_indices = np.where(convolution == num_slots_required)[0]
 
-                    # Vetoriza a marcação na mask:
-                    # Cada (path_index, modulation_index, start_idx) corresponde a um
-                    # índice discreto no action space:
                     for start_idx in valid_start_indices:
                         action_index = (
                             path_index * num_modulations * num_spectrum_resources
@@ -628,23 +643,25 @@ cdef class QRMSAEnv:
                         )
                         if action_index < self.action_space.n:
                             action_mask[action_index] = 1
-                # else: se não ok, não faz nada (todos zeros no default)
 
-        action_mask[-1] = 1  # Último índice é a ação de rejeição
-        # 10) Monta a observação final em blocos, depois flatten
-        # Observação do bit_rate (já normalizado no [bit_rate_obs])
-        # Observação de source/destination
-        # Observação de route_lengths
-        # Observação do spectrum_obs
+        # 9.12) Ação de rejeição sempre possível
+        action_mask[-1] = 1
+
+        # --- 10) Concatena observações em um único vetor (flatten) ---
         source_destination_flat = source_destination_tau.flatten().astype(np.float32)
         route_lengths_flat = route_lengths.flatten().astype(np.float32)
         spectrum_obs_flat = spectrum_obs.flatten().astype(np.float32)
 
+        print("bit_rate_obs:", bit_rate_obs)
+        print("source_destination_flat:", source_destination_flat)
+        print("route_lengths_flat:", route_lengths_flat)
+        print("spectrum_obs_flat:", spectrum_obs_flat)
+
         observation = np.concatenate([
-            bit_rate_obs,
-            source_destination_flat,
-            route_lengths_flat,
-            spectrum_obs_flat
+            bit_rate_obs,          # (1,)
+            source_destination_flat,  # (2 * num_nodes,)
+            route_lengths_flat,    # (num_paths_to_evaluate,)
+            spectrum_obs_flat      # (num_paths_to_evaluate * num_modulations * num_metrics_per_modulation,)
         ], axis=0).astype(np.float32)
 
         # Retorna o array da observação e o dicionário contendo a máscara
@@ -669,7 +686,7 @@ cdef class QRMSAEnv:
                 source_destination_tau[1, destination_id] = 1.0
 
                 num_paths_to_evaluate = self.k_paths
-                num_blocks_to_consider = self.j
+                num_blocks_to_consider = self.blocks_to_consider
                 num_metrics_per_modulation = 2 * num_blocks_to_consider + 5
 
                 spectrum_obs = np.full(
@@ -792,7 +809,9 @@ cdef class QRMSAEnv:
                 return observation, {'mask': action_mask}
         """
     
-    def decimal_to_array(self, decimal: int, max_values: list[int]) -> list[int]:
+    def decimal_to_array(self, decimal: int, max_values: list[int] = None) -> list[int]:
+        if max_values is None:
+            max_values = [self.k_paths, len(self.modulations), self.num_spectrum_resources]
         """
         Converte um valor decimal (int) para um array de índices [i0, i1, i2,...],
         de acordo com 'max_values'.
@@ -1249,16 +1268,12 @@ cdef class QRMSAEnv:
 
 
     def is_path_free(self, path: Path, initial_slot: int, number_slots: int) -> bool:
-        if initial_slot + number_slots  > self.num_spectrum_resources:
-            # logging.debug('error index' + env.parameters.rsa_algorithm)
+        end = initial_slot + number_slots
+        if end  > self.num_spectrum_resources:
             return False
-        # considering the guard band
-        start = 0
-        if initial_slot > 0:
-            start = initial_slot 
-        end = initial_slot + number_slots+ 1
-        if end == self.num_spectrum_resources:
-            end -= 1
+        start = initial_slot 
+        if end < self.num_spectrum_resources:
+            end +=1
         for i in range(len(path.node_list) - 1):
             if np.any(
                 self.topology.graph["available_slots"][
@@ -1267,11 +1282,6 @@ cdef class QRMSAEnv:
                 ]
                 == 0
             ):
-#                print(self.topology.graph["available_slots"][
-#                    self.topology[path.node_list[i]][path.node_list[i + 1]]["index"]])
-#                print(f"\n \n Service: {self.current_service} \n \n")
-#                print(f"number_slots: {number_slots} \n end: {end} \n")
-#                raise ValueError(f"Path is not free {self.topology.graph['available_slots'][self.topology[path.node_list[i]][path.node_list[i + 1]]['index'],start : end]}")
                 return False
         return True
 
@@ -1311,21 +1321,16 @@ cdef class QRMSAEnv:
     
     cpdef _provision_path(self, object path, cnp.int64_t initial_slot, int number_slots):
         cdef int i, path_length, link_index
-        cdef int start_slot = <int>initial_slot
+        cdef int start_slot = initial_slot
         cdef int end_slot = start_slot + number_slots
         cdef tuple node_list = path.get_node_list() 
-        cdef object link  # Replace with appropriate type if possible
+        cdef object link  
+
         if end_slot < self.num_spectrum_resources:
             end_slot+=1
-        # Check if the path is free
-        if not self.is_path_free(path, initial_slot, number_slots):
-            available_slots = self.get_available_slots(path)
-            raise ValueError(
-                f"Path {node_list} has not enough capacity on slots {start_slot}-{end_slot} / "
-                f"needed: {number_slots} / available: {available_slots}"
-            )
-
-        # Provision the path
+        elif end_slot > self.num_spectrum_resources:
+            raise ValueError("End slot is greater than the number of spectrum resources.")
+            
         path_length = len(node_list)
         for i in range(path_length - 1):
             # Get the link index

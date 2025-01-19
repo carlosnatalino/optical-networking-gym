@@ -45,7 +45,7 @@ def create_environment():
       - dicionário de argumentos (env_args).
     """
     # Topologia (caminho usado no PPO) e modulações
-    topology_name = "nobel-eu"  # Nome de referência
+    topology_name = "ring_4"  # Nome de referência
     topology_path = rf"C:\Users\talle\Documents\Mestrado\optical-networking-gym\examples\topologies\nobel-eu.xml"
     cur_modulations = define_modulations()
 
@@ -57,7 +57,7 @@ def create_environment():
         80,    # Ex: Distância máxima entre amplificadores (ou outro parâmetro da topologia)
         0.2,   # Atenuação
         4.5,   # Noise figure
-        5      # k_paths
+        2      # k_paths
     )
 
     # Parâmetros do ambiente (iguais ao PPO)
@@ -70,18 +70,18 @@ def create_environment():
         seed=seed,
         allow_rejection=True,
         load=210,                    # Mesmo load do PPO
-        episode_length=1000,         # Mesmo episode_length do PPO
-        num_spectrum_resources=320,  # Mesmo número de slots do PPO
+        episode_length=10000,         # Mesmo episode_length do PPO
+        num_spectrum_resources=25,  # Mesmo número de slots do PPO
         launch_power_dbm=0,          # Mesmo launch power do PPO
         frequency_slot_bandwidth=12.5e9,
         frequency_start=3e8 / 1565e-9,
-        bandwidth= 320* 12.5e9,
+        bandwidth= 25* 12.5e9,
         bit_rate_selection="discrete",
-        bit_rates=(10, 40, 100),#, 400),
+        bit_rates=(10, 40),#, 400),
         margin=0,
         measure_disruptions=False,
         file_name="",  # Podemos deixar vazio, pois não estamos logando em cada step
-        k_paths=5,     # Mesmo valor do PPO
+        k_paths=2,     # Mesmo valor do PPO
     )
     return topology, env_args
 
@@ -105,8 +105,8 @@ def run_first_fit_environment(
     :param csv_output: caminho do CSV de saída.
     """
     # Seleciona a função da heurística (first-fit)
-    # fn_heuristic = shortest_available_path_first_fit_best_modulation
-    fn_heuristic = best_modulation_load_balancing
+    fn_heuristic = shortest_available_path_first_fit_best_modulation
+    # fn_heuristic = best_modulation_load_balancing
     
     # Cria instância do ambiente
     env = gym.make("QRMSAEnvWrapper-v0", **env_args)
@@ -142,16 +142,32 @@ def run_first_fit_environment(
             resource_count = 0
             print(f"===== Episódio {ep} =====")
             obs, info = env.reset()
+            print("================= reset =================")
+            for lnk in env.unwrapped.env.topology.edges():
+                index = env.unwrapped.env.topology[lnk[0]][lnk[1]]["index"]
+                print(f"Link {lnk}: {env.unwrapped.env.topology.graph["available_slots"][index,:]}")
+                print(f"running services:" )
+                print(f"{env.unwrapped.env.topology[lnk[0]][lnk[1]]["running_services"]}")
+            print("================= reset =================")
             done = False
             start_time = time.time()
 
             while not done:
-                action = fn_heuristic(env.unwrapped.env)
-                # if bl_osnr:
-                #     osnr_count += 1
-                # if bl_resource:
-                #     resource_count += 1               
+                print(f"current service: {env.unwrapped.env.current_service}")
+                action, bl_osnr, bl_resource = fn_heuristic(env.unwrapped.env)
+                if bl_osnr:
+                    osnr_count += 1
+                if bl_resource:
+                    resource_count += 1               
                 obs, reward, terminated, truncated, info = env.step(action)
+                print("================= step =================")
+                print(f"Action: {action}, unwraped action: {env.unwrapped.env.decimal_to_array(int(action))}")
+                for lnk in env.unwrapped.env.topology.edges():
+                    index = env.unwrapped.env.topology[lnk[0]][lnk[1]]["index"]
+                    # print(f"Link {lnk}: {env.unwrapped.env.topology.graph["available_slots"][index,:]}")
+                    # print(f"running services:" )
+                    # for service in env.unwrapped.env.topology[lnk[0]][lnk[1]]["running_services"]:
+                    #     print(f"ID: {service.service_id}, src: {service.source}, tgt: {service.destination}, Path: {service.path}, init_slot: {service.initial_slot}, numb_slots: {service.number_slots}, BW: {service.bandwidth}, center_freq: {service.center_frequency}, mod: {service.current_modulation}, OSNR: {service.OSNR}, ASE: {service.ASE}, NLI: {service.NLI}\n")
                 done = terminated or truncated
 
             end_time = time.time()
@@ -191,14 +207,15 @@ def main():
     topology, env_args = create_environment()
 
     # (B) Definimos o número de episódios para 5
-    n_eval_episodes = 2
+    n_eval_episodes = 10
 
     # (C) Executamos a heurística First-Fit e salvamos em CSV
+    time = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_first_fit_environment(
         n_eval_episodes=n_eval_episodes,
         topology=topology,
         env_args=env_args,
-        csv_output="newgsnr__first_fit_nobel_us_results.csv",
+        csv_output=f"newgsnr__first_fit_nobel_us_results_{time}.csv",
     )
 
 if __name__ == "__main__":

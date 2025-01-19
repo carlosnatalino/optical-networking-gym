@@ -74,10 +74,14 @@ def shortest_available_path_first_fit_best_modulation(
             number_slots = qrmsa_env.get_number_slots(qrmsa_env.current_service, modulation)# para guard band
 
             initial_indices, values, lengths = rle(available_slots)
-
-            sufficient_indices = np.where(lengths >= (number_slots+1))
+            sufficient_indices = np.where(lengths >= (number_slots))
             available_indices = np.where(values == 1)
             final_indices = np.intersect1d(available_indices, sufficient_indices)
+            if final_indices.size > 0:
+                if initial_indices[final_indices][0] < env.num_spectrum_resources-1:
+                    sufficient_indices = np.where(lengths >= (number_slots+1))
+                    available_indices = np.where(values == 1)
+                    final_indices = np.intersect1d(available_indices, sufficient_indices)
 
             if final_indices.size > 0:  # há slots disponíveis
                 bl_resource = False

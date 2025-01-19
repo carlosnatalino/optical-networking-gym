@@ -63,34 +63,47 @@ cpdef calculate_osnr(env: QRMSAEnv, current_service: object):
             # Soma das contribuições NLI de outros serviços rodando nesse link
             for running_service in env.topology[link.node1][link.node2]["running_services"]:
                 if running_service.service_id != current_service.service_id:
-                    # Cálculo do phi
-                    phi = (
-                        asinh(
-                            pi**2 * abs(beta_2) * l_eff_a * running_service.bandwidth *
-                            (
-                                running_service.center_frequency
-                                - current_service.center_frequency
-                                + (running_service.bandwidth / 2.0)
+                    try:
+                        # Cálculo do phi
+                        phi = (
+                            asinh(
+                                pi**2 * abs(beta_2) * l_eff_a * running_service.bandwidth *
+                                (
+                                    running_service.center_frequency
+                                    - current_service.center_frequency
+                                    + (running_service.bandwidth / 2.0)
+                                )
                             )
-                        )
-                        - asinh(
-                            pi**2 * abs(beta_2) * l_eff_a * running_service.bandwidth *
-                            (
-                                running_service.center_frequency
-                                - current_service.center_frequency
-                                - (running_service.bandwidth / 2.0)
+                            - asinh(
+                                pi**2 * abs(beta_2) * l_eff_a * running_service.bandwidth *
+                                (
+                                    running_service.center_frequency
+                                    - current_service.center_frequency
+                                    - (running_service.bandwidth / 2.0)
+                                )
                             )
+                        ) - (
+                            phi_modulation_format[running_service.current_modulation.spectral_efficiency - 1]
+                            * (
+                                running_service.bandwidth
+                                / abs(running_service.center_frequency - current_service.center_frequency)
+                            )
+                            * (5.0 / 3.0)
+                            * (l_eff / (span.length * 1e3))
                         )
-                    ) - (
-                        phi_modulation_format[running_service.current_modulation.spectral_efficiency - 1]
-                        * (
-                            running_service.bandwidth
-                            / abs(running_service.center_frequency - current_service.center_frequency)
-                        )
-                        * (5.0 / 3.0)
-                        * (l_eff / (span.length * 1e3))
-                    )
-                    sum_phi += phi
+                        sum_phi += phi
+                    except Exception as e:
+                        print(f"Error: {e}")
+                        print("================= error =================")
+                        print("current_time: ", env.current_time)
+                        print(f'current_service: {current_service}\n')
+                        print(f'running_service: {running_service}\n')
+                        index = env.topology[link.node1][link.node2]["index"]
+                        print(f'Link {link.node1,link.node2}: {env.topology.graph["available_slots"][index,:]}\n\n')
+                        print(f"running services:" )
+                        for service in env.topology[link.node1][link.node2]["running_services"]:
+                            print(f"ID: {service.service_id}, src: {service.source}, tgt: {service.destination}, Path: {service.path}, init_slot: {service.initial_slot}, numb_slots: {service.number_slots}, BW: {service.bandwidth}, center_freq: {service.center_frequency}, mod: {service.current_modulation}, OSNR: {service.OSNR}, ASE: {service.ASE}, NLI: {service.NLI}\n")
+                        raise ValueError("Error in calculate_osnr")
 
             # Potência de NLI no span
             power_nli_span = (
