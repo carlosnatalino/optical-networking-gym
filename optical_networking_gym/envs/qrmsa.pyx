@@ -398,6 +398,9 @@ cdef class QRMSAEnv:
         self.episode_services_accepted = 0
         self.episode_disrupted_services = 0
         self._events = []
+        self.bl_resource = 0
+        self.bl_osnr = 0
+        self.bl_reject = 0
 
         self.episode_actions_output = np.zeros(
             (self.k_paths + self.reject_action, self.num_spectrum_resources + self.reject_action),
@@ -474,21 +477,18 @@ cdef class QRMSAEnv:
         return (value - min_v) / (max_v - min_v)
     
     def observation(self):
-
         # --- 1) Leitura de variáveis externas (mantendo nomes originais) ---
         topology = self.topology
         current_service = self.current_service
         num_spectrum_resources = self.num_spectrum_resources
-        print("num_spectrum_resources:", num_spectrum_resources)
         k_shortest_paths = self.k_shortest_paths
-        print("k_shortest_paths:", k_shortest_paths)
         modulations = self.modulations
         num_modulations = len(modulations)
         num_nodes = topology.number_of_nodes()
-        print("num_nodes:", num_nodes)  
         frequency_slot_bandwidth = self.channel_width * 1e9
         max_block_length = num_spectrum_resources
         max_bit_rate = max(self.bit_rates)
+        osnr_normalized = -1
 
         # --- 2) Fonte/destino em one-hot 2D -> flatten ---
         source_id = int(current_service.source_id)
@@ -499,9 +499,7 @@ cdef class QRMSAEnv:
 
         # --- 3) Definições para rotas e blocos ---
         num_paths_to_evaluate = self.k_paths
-        print("num_paths_to_evaluate:", num_paths_to_evaluate)
         num_blocks_to_consider = self.blocks_to_consider
-        print("num_blocks_to_consider:", num_blocks_to_consider)
 
         # Observamos, por exemplo, 2 feature slots por bloco (início, comprimento),
         # mais 5 métricas (slots necessários, slots livres, tamanho médio, OSNR e etc.)
@@ -583,7 +581,7 @@ cdef class QRMSAEnv:
 
                     # 9.5.1) Agora, normalizamos a OSNR e comparamos com 0.8 do limiar
                     #        Se osnr_value < 0, significa que o cálculo retornou inviável.
-                    if osnr_value >= -0.2:
+                    if osnr_value >= -0.1:
                             osnr_ok = True
                             osnr_normalized = osnr_value
 
@@ -651,12 +649,6 @@ cdef class QRMSAEnv:
         source_destination_flat = source_destination_tau.flatten().astype(np.float32)
         route_lengths_flat = route_lengths.flatten().astype(np.float32)
         spectrum_obs_flat = spectrum_obs.flatten().astype(np.float32)
-
-        print("bit_rate_obs:", bit_rate_obs)
-        print("source_destination_flat:", source_destination_flat)
-        print("route_lengths_flat:", route_lengths_flat)
-        print("spectrum_obs_flat:", spectrum_obs_flat)
-
         observation = np.concatenate([
             bit_rate_obs,          # (1,)
             source_destination_flat,  # (2 * num_nodes,)
@@ -1051,7 +1043,7 @@ cdef class QRMSAEnv:
         if not action == (self.action_space.n - 1):
             reward = self.reward()
         else:
-            reward = -1.0
+            reward = -5.0
         info = {
             "episode_services_accepted": self.episode_services_accepted,
             "service_blocking_rate": 0.0,
@@ -1288,7 +1280,7 @@ cdef class QRMSAEnv:
     cpdef double reward(self):
         cdef bint accepted = self.current_service.accepted
         if not accepted:
-            return ( -(float(self.episode_services_processed - self.episode_services_accepted)
+            return ( -2*(float(self.episode_services_processed - self.episode_services_accepted)
             ) / float(self.episode_services_processed))
 
         # Recupera parâmetros do serviço
@@ -1305,16 +1297,16 @@ cdef class QRMSAEnv:
         #
         # Clampa para [0,1] ao final.
 
-        cdef double alpha = 0.25 #Penaliza quanto maior for a diferença entre a OSNR real e a mínima necessária.
-        cdef double beta = 0.1 #Recompensa modulações com maior eficiência espectral.
+        cdef double alpha = 0.3 #Penaliza quanto maior for a diferença entre a OSNR real e a mínima necessária.
+        cdef double beta = 0.6 #Recompensa modulações com maior eficiência espectral.
 
         cdef double reward_value = 1.0 - alpha * abs(osnr_diff) + beta * se
 
         # Mantém a recompensa entre 0 e 1
-        if reward_value > 1.0:
-            reward_value = 1.0
-        elif reward_value < 0.0:
-            reward_value = 0.0
+#        if reward_value > 1.0:
+#            reward_value = 1.0
+#        elif reward_value < 0.0:
+#            reward_value = 0.0
 
         return reward_value
 
