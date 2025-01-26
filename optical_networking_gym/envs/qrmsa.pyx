@@ -398,6 +398,9 @@ cdef class QRMSAEnv:
         self.episode_services_accepted = 0
         self.episode_disrupted_services = 0
         self._events = []
+        self.bl_resource = 0
+        self.bl_osnr = 0
+        self.bl_reject = 0
 
         self.episode_actions_output = np.zeros(
             (self.k_paths + self.reject_action, self.num_spectrum_resources + self.reject_action),
@@ -1174,7 +1177,7 @@ cdef class QRMSAEnv:
         if not action == (self.action_space.n - 1):
             reward = self.reward()
         else:
-            reward = -1.0
+            reward = -5.0
         info = {
             "episode_services_accepted": self.episode_services_accepted,
             "service_blocking_rate": 0.0,
@@ -1411,7 +1414,7 @@ cdef class QRMSAEnv:
     cpdef double reward(self):
         cdef bint accepted = self.current_service.accepted
         if not accepted:
-            return ( -(float(self.episode_services_processed - self.episode_services_accepted)
+            return ( -2*(float(self.episode_services_processed - self.episode_services_accepted)
             ) / float(self.episode_services_processed))
 
         # Recupera parâmetros do serviço
@@ -1428,16 +1431,16 @@ cdef class QRMSAEnv:
         #
         # Clampa para [0,1] ao final.
 
-        cdef double alpha = 0.25 #Penaliza quanto maior for a diferença entre a OSNR real e a mínima necessária.
-        cdef double beta = 0.1 #Recompensa modulações com maior eficiência espectral.
+        cdef double alpha = 0.3 #Penaliza quanto maior for a diferença entre a OSNR real e a mínima necessária.
+        cdef double beta = 0.6 #Recompensa modulações com maior eficiência espectral.
 
         cdef double reward_value = 1.0 - alpha * abs(osnr_diff) + beta * se
 
         # Mantém a recompensa entre 0 e 1
-        if reward_value > 1.0:
-            reward_value = 1.0
-        elif reward_value < 0.0:
-            reward_value = 0.0
+#        if reward_value > 1.0:
+#            reward_value = 1.0
+#        elif reward_value < 0.0:
+#            reward_value = 0.0
 
         return reward_value
 

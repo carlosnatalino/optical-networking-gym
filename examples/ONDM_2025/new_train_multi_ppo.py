@@ -56,7 +56,7 @@ def create_environment_config():
     # Topologia e modulações
     cur_modulations = define_modulations()
     topology_name = "nobel-eu"
-    topology_path = r"/home/talles/projects/optical-networking-gym/examples/topologies/nobel-us.xml"
+    topology_path = r"/home/talles/projects/optical-networking-gym/examples/topologies/nobel-eu.xml"
     topology = get_topology(
         topology_path,
         topology_name,
@@ -147,14 +147,14 @@ class SingleCallback(BaseCallback):
 
     def __init__(
         self, 
-        max_episodes: int = 10_000,
+        max_episodes: int = 15_000,
         # Parâmetros do scheduler de ent_coef
         initial_ent_coef: float = 0.03,
-        final_ent_coef: float = 0.001,
-        schedule_timesteps: int = 1_500_000,
+        final_ent_coef: float = 0.01,
+        schedule_timesteps: int = 4_500_000,
         # Parâmetros do ExplorationBoost
-        check_interval: int = 100,
-        threshold: float = 0.01,
+        check_interval: int = 200,
+        threshold: float = 0.1,
         verbose: int = 0
     ):
         super().__init__(verbose)
@@ -189,6 +189,7 @@ class SingleCallback(BaseCallback):
         self.threshold = threshold
         self.last_mean = None  # para comparar variação de reward
         # Reaproveitamos self.episode_rewards para esse callback
+        self.best_mean_reward = -np.inf
 
     def _on_training_start(self) -> None:
         """
@@ -259,7 +260,7 @@ class SingleCallback(BaseCallback):
                 # D) Montar dicionário para CSV (exceto mask)
                 row_dict = {}
                 for k, v in info.items():
-                    if k in ["mask", "service_blocking_rate", "bit_rate_blocking_rate", "disrupted_services","osnr", "osnr_req", "chosen_path_index", "chosen_slot", "TimeLimit.truncated","terminal_observation","episode","episode_bit_rate_blocking_rate","episode_service_blocking_rate"]:
+                    if k in ["mask", "service_blocking_rate", "bit_rate_blocking_rate", "disrupted_services","osnr", "osnr_req", "chosen_path_index", "chosen_slot", "TimeLimit.truncated","terminal_observation","episode"]:
                         continue
                     row_dict[k] = v
 
@@ -298,9 +299,9 @@ class SingleCallback(BaseCallback):
                 if abs(current_mean - self.last_mean) < self.threshold:
                     # Aumenta ent_coef em 10%
                     self.model.ent_coef *= 1.1
-                    if self.verbose > 0:
-                        print(f"[SingleCallback][ExplorationBoost] Recompensa estagnada de {self.last_mean:.2f} "
-                              f"para {current_mean:.2f}. Novo ent_coef = {self.model.ent_coef:.4f}")
+                    # if self.verbose > 0:
+                        # print(f"[SingleCallback][ExplorationBoost] Recompensa estagnada de {self.last_mean:.2f} "
+                        #       f"para {current_mean:.2f}. Novo ent_coef = {self.model.ent_coef:.4f}")
                     # Podemos registrar também
                     self.logger.record("hyperparams/ent_coef_boost", self.model.ent_coef)
             self.last_mean = current_mean
@@ -311,6 +312,15 @@ class SingleCallback(BaseCallback):
             mean_length_100 = np.mean(self.episode_lengths[-100:])
             self.logger.record("metrics/mean_reward_100", mean_reward_100)
             self.logger.record("metrics/mean_length_100", mean_length_100)
+        else:
+            mean_reward_100 = -np.inf
+
+        if mean_reward_100 > self.best_mean_reward:
+                self.best_mean_reward = mean_reward_100
+                self.model.save("best_model_100_so far.zip")
+                if self.verbose > 0:
+                    print(f"[SingleCallback] Novo melhor mean_reward_100: {mean_reward_100:.2f}. "
+                          f"Modelo salvo em best_model_so_far.zip.")
 
         for metric_key, metric_values in self.custom_metrics.items():
             if len(metric_values) > 0:
@@ -352,27 +362,27 @@ def main():
             return progress_remaining * initial_value
         return func
 
-    policy_kwargs = dict(net_arch=dict(pi=[512, 256, 128, 64], vf=[512, 256, 128, 64]))
+    policy_kwargs = dict(net_arch=dict(pi=[512, 256, 128], vf=[512, 256, 128]))
 
     model = MaskablePPO(
         policy="MlpPolicy",
         env=vec_env,
-        learning_rate=linear_schedule(5e-4),  # LR decai linearmente até 0
-        n_steps=512,
-        batch_size=128,
-        gamma=0.98,
-        gae_lambda=0.97,
+        learning_rate=linear_schedule(4e-4),  # LR decai linearmente até 0
+        n_steps=1024,
+        batch_size=64,
+        gamma=0.99,
+        gae_lambda=0.95,
         ent_coef=0.03,
         clip_range=0.2,
         verbose=1,
         seed=42,
         policy_kwargs=policy_kwargs,
-        tensorboard_log="./ppo_masked_tensorboard/"  # Se quiser log no TensorBoard
+        tensorboard_log="./ppo_masked_tensorboard_final/"  # Se quiser log no TensorBoard
     )
 
     # (C) Criar callback único
     single_callback = SingleCallback(
-        max_episodes=10_000,  # 10.000 episódios
+        max_episodes=20_000,  # 10.000 episódios
         verbose=1
     )
 
@@ -385,7 +395,7 @@ def main():
     )
 
     # (E) Salvar modelo final
-    model.save("ppo_masked_final.zip")
+    model.save("ppo_masked_final_20k.zip")
     print("Treinamento finalizado. Modelo salvo em 'ppo_masked_final.zip'.")
 
     # (F) (Opcional) Teste rápido
