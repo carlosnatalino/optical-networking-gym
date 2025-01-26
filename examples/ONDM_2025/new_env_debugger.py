@@ -46,7 +46,7 @@ def create_environment():
     """
     # Topologia (caminho usado no PPO) e modulações
     topology_name = "ring_4"  # Nome de referência
-    topology_path = rf"C:\Users\talle\Documents\Mestrado\optical-networking-gym\examples\topologies\nobel-eu.xml"
+    topology_path = rf"C:\Users\talle\Documents\Mestrado\optical-networking-gym\examples\topologies\ring_4.txt"
     cur_modulations = define_modulations()
 
     # Cria objeto de topologia
@@ -70,18 +70,18 @@ def create_environment():
         seed=seed,
         allow_rejection=True,
         load=210,                    # Mesmo load do PPO
-        episode_length=10000,         # Mesmo episode_length do PPO
-        num_spectrum_resources=25,  # Mesmo número de slots do PPO
+        episode_length=1000,         # Mesmo episode_length do PPO
+        num_spectrum_resources=15,  # Mesmo número de slots do PPO
         launch_power_dbm=0,          # Mesmo launch power do PPO
         frequency_slot_bandwidth=12.5e9,
         frequency_start=3e8 / 1565e-9,
-        bandwidth= 25* 12.5e9,
+        bandwidth= 15* 12.5e9,
         bit_rate_selection="discrete",
-        bit_rates=(10, 40),#, 400),
+        bit_rates=(10, 40),#,100, 400),
         margin=0,
         measure_disruptions=False,
         file_name="",  # Podemos deixar vazio, pois não estamos logando em cada step
-        k_paths=2,     # Mesmo valor do PPO
+        k_paths=1,     # Mesmo valor do PPO
     )
     return topology, env_args
 
@@ -207,7 +207,7 @@ def main():
     topology, env_args = create_environment()
 
     # (B) Definimos o número de episódios para 5
-    n_eval_episodes = 10
+    n_eval_episodes = 2
 
     # (C) Executamos a heurística First-Fit e salvamos em CSV
     time = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -215,7 +215,7 @@ def main():
         n_eval_episodes=n_eval_episodes,
         topology=topology,
         env_args=env_args,
-        csv_output=f"newgsnr__first_fit_nobel_us_results_{time}.csv",
+        csv_output=f"-4dbm_newgsnr__first_fit_nobel_us_results_{time}.csv",
     )
 
 if __name__ == "__main__":
