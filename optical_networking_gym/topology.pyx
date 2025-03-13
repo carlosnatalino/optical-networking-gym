@@ -325,6 +325,7 @@ def get_topology(
                     selected_modulations = [None for _ in lengths]
 
                 objs = []
+                k = 0
                 for path, length, modulation in zip(paths, lengths, selected_modulations):
                     # Generate links along the path
                     path_links = []
@@ -337,7 +338,7 @@ def get_topology(
                     objs.append(
                         Path(
                             id=idp,
-                            k=k_paths,  
+                            k=k,  
                             node_list=tuple(path),
                             hops=len(path) - 1,
                             length=length,
@@ -345,6 +346,7 @@ def get_topology(
                             links=path_links,
                         )
                     )
+                    k += 1
                     idp += 1
                     max_length = max(max_length, length)
                     min_length = min(min_length, length)

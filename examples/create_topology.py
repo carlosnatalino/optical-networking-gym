@@ -9,7 +9,7 @@ from optical_networking_gym.topology import (
     Span,
     Link,
     Path,
-    # get_topology,
+    get_topology,
     get_k_shortest_paths,
     get_path_weight,
     get_best_modulation_format_by_length,
@@ -99,111 +99,111 @@ cur_modulations: Tuple[Modulation] = (
 )
 
 
-def get_topology(
-    file_path: str,
-    topology_name: str,
-    modulations: Optional[Tuple[Modulation]] = None,
-    max_span_length: float = 100,
-    default_attenuation: float = 0.2,
-    default_noise_figure: float = 4.5,
-    k_paths: int = 5
-) -> nx.Graph:
-    """
-    Function
-    """
-    k_shortest_paths = {}
-    if file_path.endswith(".xml"):
-        topology = read_sndlib_topology(file_path)
-    elif file_path.endswith(".txt"):
-        topology = read_txt_file(file_path)
-    else:
-        raise ValueError("Supplied topology format is unknown")
+# def get_topology(
+#     file_path: str,
+#     topology_name: str,
+#     modulations: Optional[Tuple[Modulation]] = None,
+#     max_span_length: float = 100,
+#     default_attenuation: float = 0.2,
+#     default_noise_figure: float = 4.5,
+#     k_paths: int = 5
+# ) -> nx.Graph:
+#     """
+#     Function
+#     """
+#     k_shortest_paths = {}
+#     if file_path.endswith(".xml"):
+#         topology = read_sndlib_topology(file_path)
+#     elif file_path.endswith(".txt"):
+#         topology = read_txt_file(file_path)
+#     else:
+#         raise ValueError("Supplied topology format is unknown")
 
-    # generating the spans
-    topology.graph["has_links_object"] = True
-    for node1, node2 in topology.edges():
-        length = topology[node1][node2]["length"]
-        num_spans = int(length // max_span_length)
-        if length % num_spans != 0:
-            num_spans += 1
-        # print(f"{num_spans=}")
-        span_length = length / num_spans
-        spans = []
-        for _ in range(num_spans):
-            span = Span(
-                length=span_length,
-                attenuation=default_attenuation,
-                noise_figure=default_noise_figure,
-            )
-            spans.append(span)
+#     # generating the spans
+#     topology.graph["has_links_object"] = True
+#     for node1, node2 in topology.edges():
+#         length = topology[node1][node2]["length"]
+#         num_spans = int(length // max_span_length)
+#         if length % num_spans != 0:
+#             num_spans += 1
+#         # print(f"{num_spans=}")
+#         span_length = length / num_spans
+#         spans = []
+#         for _ in range(num_spans):
+#             span = Span(
+#                 length=span_length,
+#                 attenuation=default_attenuation,
+#                 noise_figure=default_noise_figure,
+#             )
+#             spans.append(span)
 
-        link = Link(
-            id=topology[node1][node2]["index"],
-            length=length,
-            node1=node1,
-            node2=node2,
-            spans=tuple(spans),
-        )
-        topology[node1][node2]["link"] = link
-        # print(link)
+#         link = Link(
+#             id=topology[node1][node2]["index"],
+#             length=length,
+#             node1=node1,
+#             node2=node2,
+#             spans=tuple(spans),
+#         )
+#         topology[node1][node2]["link"] = link
+#         # print(link)
 
-    idp = 0
-    for idn1, n1 in enumerate(topology.nodes()):
-        for idn2, n2 in enumerate(topology.nodes()):
-            if idn1 < idn2:
-                paths = get_k_shortest_paths(topology, n1, n2, k_paths, weight="length")
-                print(n1, n2, len(paths))
-                lengths = [
-                    get_path_weight(topology, path, weight="length") for path in paths
-                ]
-                if modulations is not None:
-                    selected_modulations = [
-                        get_best_modulation_format_by_length(length, modulations)
-                        for length in lengths
-                    ]
-                else:
-                    selected_modulations = [None for _ in lengths]
-                objs = []
-                k = 0
-                for path, length, modulation in zip(
-                    paths, lengths, selected_modulations
-                ):
-                    links = []
-                    for i in range(len(path) - 1):
-                        links.append(topology[path[i]][path[i + 1]]["link"])
-                    objs.append(
-                        Path(
-                            idp,
-                            k,
-                            tuple(path),
-                            tuple(links),
-                            len(path),
-                            length,
-                            modulation,
-                        )
-                    )  # <== The topology is created and a best modulation is just automatically attached.  In our new implementation, the best modulation will be variable depending on available resources and the amount of crosstalk it will cause.
-                    print("\t", objs[-1])
-                    idp += 1
-                    k += 1
-                k_shortest_paths[n1, n2] = objs
-                k_shortest_paths[n2, n1] = objs
-    topology.graph["name"] = topology_name
-    topology.graph["ksp"] = k_shortest_paths
-    if modulations is not None:
-        topology.graph["modulations"] = modulations
-    topology.graph["k_paths"] = k_paths
-    topology.graph["node_indices"] = []
-    for idx, node in enumerate(topology.nodes()):
-        topology.graph["node_indices"].append(node)
-        topology.nodes[node]["index"] = idx
-    return topology
+#     idp = 0
+#     for idn1, n1 in enumerate(topology.nodes()):
+#         for idn2, n2 in enumerate(topology.nodes()):
+#             if idn1 < idn2:
+#                 paths = get_k_shortest_paths(topology, n1, n2, k_paths, weight="length")
+#                 print(n1, n2, len(paths))
+#                 lengths = [
+#                     get_path_weight(topology, path, weight="length") for path in paths
+#                 ]
+#                 if modulations is not None:
+#                     selected_modulations = [
+#                         get_best_modulation_format_by_length(length, modulations)
+#                         for length in lengths
+#                     ]
+#                 else:
+#                     selected_modulations = [None for _ in lengths]
+#                 objs = []
+#                 k = 0
+#                 for path, length, modulation in zip(
+#                     paths, lengths, selected_modulations
+#                 ):
+#                     links = []
+#                     for i in range(len(path) - 1):
+#                         links.append(topology[path[i]][path[i + 1]]["link"])
+#                     objs.append(
+#                         Path(
+#                             idp,
+#                             k,
+#                             tuple(path),
+#                             tuple(links),
+#                             len(path),
+#                             length,
+#                             modulation,
+#                         )
+#                     )  # <== The topology is created and a best modulation is just automatically attached.  In our new implementation, the best modulation will be variable depending on available resources and the amount of crosstalk it will cause.
+#                     print("\t", objs[-1])
+#                     idp += 1
+#                     k += 1
+#                 k_shortest_paths[n1, n2] = objs
+#                 k_shortest_paths[n2, n1] = objs
+#     topology.graph["name"] = topology_name
+#     topology.graph["ksp"] = k_shortest_paths
+#     if modulations is not None:
+#         topology.graph["modulations"] = modulations
+#     topology.graph["k_paths"] = k_paths
+#     topology.graph["node_indices"] = []
+#     for idx, node in enumerate(topology.nodes()):
+#         topology.graph["node_indices"].append(node)
+#         topology.nodes[node]["index"] = idx
+#     return topology
 
 
 if __name__ == "__main__":
     # default values
     default_k_paths = 5
     default_topology_file = "nsfnet_chen.txt"
-    default_max_span_length = 100
+    default_max_span_length = 80
     default_attenuation = 0.2  # dB/km
     default_noise_figure = 4.5  # dB
 

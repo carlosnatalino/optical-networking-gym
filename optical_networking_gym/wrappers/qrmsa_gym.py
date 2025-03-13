@@ -34,7 +34,7 @@ class QRMSAEnvWrapper(gym.Env):
         return self.env.reset(seed=seed, options=options)
 
     def step(self, action: Any) -> tuple[Any, SupportsFloat, bool, bool, dict[str, Any]]:
-        print(action)
+        # print(action)
         return self.env.step(action)
 
     
@@ -126,6 +126,7 @@ def run_environment(
     for mf in env.env.modulations:
         file_handler.write(f",modulation_{mf.spectral_efficiency}")
     file_handler.write(",episode_disrupted_services,episode_time\n")
+    file_handler.flush()
 
     for ep in range(n_eval_episodes):
         env.reset(options={"only_episode_counters": True})
@@ -139,11 +140,12 @@ def run_environment(
             
             _, _, done, _, info = env.step(action)
         end_time = time.time()
-        print(info)
+        print(launch_power_dbm, load, heuristic, info)
         file_handler.write(f"{ep},{info['service_blocking_rate']},{info['episode_service_blocking_rate']},{info['bit_rate_blocking_rate']},{info['episode_bit_rate_blocking_rate']}")
         for mf in env.env.modulations:
             file_handler.write(f",{info[f'modulation_{mf.spectral_efficiency}']}")
         file_handler.write(f",{info['episode_disrupted_services']},{(end_time - start_time):.2f}\n")
+        file_handler.flush()
     file_handler.close()
 
     return

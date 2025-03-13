@@ -17,7 +17,7 @@ np.set_printoptions(linewidth=np.inf)
 seed = 20
 random.seed(seed)
 
-def parse_arguments():
+def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Optical Network Simulation')
 
     parser.add_argument(
@@ -108,9 +108,7 @@ def main():
 
     # Default parameters
     attenuation_db_km = 0.2
-    default_attenuation_normalized = attenuation_db_km / (2 * 10 * np.log10(np.exp(1)) * 1e3)
     default_noise_figure_db = 4.5
-    default_noise_figure = 10 ** (default_noise_figure_db / 10)
 
     # Load topology
     topology_path = os.path.join(
@@ -118,7 +116,7 @@ def main():
     )
     topology = get_topology(
         topology_path,           # Path to the topology file
-        "NSFNET",                # Name of the topology
+        None,                # Name of the topology
         cur_modulations,         # Tuple of modulation formats
         80,                      # Maximum span length in km
         attenuation_db_km,       # Default attenuation in dB/km
@@ -135,7 +133,7 @@ def main():
     bit_rates = (10, 40, 100, 400)
 
     # Define launch powers
-    launch_powers = np.linspace(-1, 1, num=5)
+    launch_powers = np.linspace(-8, 8, 9)
     env_args = []
 
     # Prepare simulation arguments for each launch power

@@ -493,7 +493,7 @@ cdef class QRMSAEnv:
         cdef bint terminated
 
         if action is not None:
-            print(f"action: {action}")
+            # print(f"action: {action}")
             # Unpack the action tuple
             route = int(action[0])
             modulation_index = int(action[1])
@@ -617,6 +617,7 @@ cdef class QRMSAEnv:
                 line += "-1,-1,-1,-1,-1,-1,-1,-1"
             line += "\n"
             self.file_stats.write(line)
+            self.file_stats.flush()
 
         # Generate statistics for the episode info
         reward = self.reward()
@@ -633,30 +634,30 @@ cdef class QRMSAEnv:
 
         # Cálculos das taxas de bloqueio
         if self.services_processed > 0:
-            info["service_blocking_rate"] = (
+            info["service_blocking_rate"] = float(
                 self.services_processed - self.services_accepted
             ) / self.services_processed
 
         if self.episode_services_processed > 0:
-            info["episode_service_blocking_rate"] = (
+            info["episode_service_blocking_rate"] = float(
                 self.episode_services_processed - self.episode_services_accepted
             ) / self.episode_services_processed
 
         if self.bit_rate_requested > 0:
-            info["bit_rate_blocking_rate"] = (
+            info["bit_rate_blocking_rate"] = float(
                 self.bit_rate_requested - self.bit_rate_provisioned
             ) / self.bit_rate_requested
 
         if self.episode_bit_rate_requested > 0:
-            info["episode_bit_rate_blocking_rate"] = (
+            info["episode_bit_rate_blocking_rate"] = float(
                 self.episode_bit_rate_requested - self.episode_bit_rate_provisioned
             ) / self.episode_bit_rate_requested
 
         if self.disrupted_services > 0 and self.services_accepted > 0:
-            info["disrupted_services"] = self.disrupted_services / self.services_accepted
+            info["disrupted_services"] = float(self.disrupted_services) / self.services_accepted
 
         if self.episode_disrupted_services > 0 and self.episode_services_accepted > 0:
-            info["episode_disrupted_services"] = (
+            info["episode_disrupted_services"] = float(
                 self.episode_disrupted_services / self.episode_services_accepted
             )
 
@@ -667,14 +668,14 @@ cdef class QRMSAEnv:
             if spectral_eff in self.episode_modulation_histogram:
                 info[key] = self.episode_modulation_histogram[spectral_eff]
             else:
-                print(f"Warning: spectral_efficiency {spectral_eff} not found in histogram.")
+                # print(f"Warning: spectral_efficiency {spectral_eff} not found in histogram.")
                 info[key] = 0  # Valor padrão ou outro tratamento adequado
 
         # Preparar para o próximo serviço
         self._new_service = False
         self._next_service()
         terminated = self.episode_services_processed == self.episode_length
-        print(info)
+        # print(info)
         return (
             self.observation(),
             reward,
@@ -733,11 +734,11 @@ cdef class QRMSAEnv:
             self.episode_bit_rate_requested_histogram[self.current_service.bit_rate] += 1
 
         while len(self._events) > 0:
-            time, service_to_release = heapq.heappop(self._events)
+            time, _, service_to_release = heapq.heappop(self._events)
             if time <= self.current_time:
                 self._release_path(service_to_release)
             else:
-                heapq.heappush(self._events, (time, service_to_release))
+                heapq.heappush(self._events, (time, service_to_release.service_id, service_to_release))
                 break 
     
     cpdef void set_load(self, float load=-1.0, float mean_service_holding_time=-1.0):
@@ -896,9 +897,9 @@ cdef class QRMSAEnv:
                 f"needed: {number_slots} / available: {available_slots}"
             )
 
-        print(
-            f"{self.current_service.service_id} assigning path {node_list} on initial slot {start_slot} for {number_slots} slots"
-        )
+        # print(
+        #     f"{self.current_service.service_id} assigning path {node_list} on initial slot {start_slot} for {number_slots} slots"
+        # )
 
         # Provision the path
         path_length = len(node_list)
@@ -957,7 +958,7 @@ cdef class QRMSAEnv:
         """
         cdef double release_time
         release_time = service.arrival_time + service.holding_time
-        heapq.heappush(self._events, (release_time, service))
+        heapq.heappush(self._events, (release_time, service.service_id, service))
     
     cpdef _release_path(self, Service service):
         cdef int i, link_index
@@ -983,8 +984,8 @@ cdef class QRMSAEnv:
             ] = -1
 
             # Remove the service from the running services on this link
-            print(service)
-            print(self.topology[node_list[i]][node_list[i + 1]]["running_services"])
+            # print(service)
+            # print(self.topology[node_list[i]][node_list[i + 1]]["running_services"])
             self.topology[node_list[i]][node_list[i + 1]]["running_services"].remove(service)
 
             # Update link statistics after releasing the service
@@ -1025,12 +1026,12 @@ cdef class QRMSAEnv:
         cdef int last_index  # Variável para armazenar o último índice de used_blocks
 
         # Atualização do link
-        print(f"Updating link stats for nodes {node1} -> {node2}")
+        # print(f"Updating link stats for nodes {node1} -> {node2}")
 
         # Bloco 1: Inicialização e obtenção do link
         link = self.topology[node1][node2]
         last_update = link["last_update"]
-        print(f"Last update time: {last_update}")
+        # print(f"Last update time: {last_update}")
 
         # Inicializar last_external_fragmentation e last_compactness
         last_external_fragmentation = link.get("external_fragmentation", 0.0)
@@ -1038,58 +1039,58 @@ cdef class QRMSAEnv:
 
         # Bloco 2: Cálculos de tempo e utilização
         time_diff = self.current_time - last_update
-        print(f"Time difference: {time_diff}")
+        # print(f"Time difference: {time_diff}")
 
         if self.current_time > 0:
             last_util = link["utilization"]
-            print(f"Last utilization: {last_util}")
+            # print(f"Last utilization: {last_util}")
 
             slot_allocation = self.topology.graph["available_slots"][link["index"], :]
-            print(f"Slot allocation before conversion: {slot_allocation}")
+            # print(f"Slot allocation before conversion: {slot_allocation}")
 
             # Convert slot_allocation para um array NumPy compatível com Cython de int32
             slot_allocation = <cnp.ndarray[cnp.int32_t, ndim=1]> np.asarray(slot_allocation, dtype=np.int32)
             slot_allocation_view = slot_allocation
-            print(f"Slot allocation after conversion: {slot_allocation}")
+            # print(f"Slot allocation after conversion: {slot_allocation}")
 
             # Calcular a utilização atual
             used_spectrum_slots = self.num_spectrum_resources - np.sum(slot_allocation)
-            print(f"Used spectrum slots: {used_spectrum_slots}")
+            # print(f"Used spectrum slots: {used_spectrum_slots}")
 
             # Garantir divisão de ponto flutuante
             cur_util = <double> used_spectrum_slots / self.num_spectrum_resources
-            print(f"Current utilization: {cur_util}")
+            # print(f"Current utilization: {cur_util}")
 
             # Atualizar utilização usando uma média ponderada
             utilization = ((last_util * last_update) + (cur_util * time_diff)) / self.current_time
             link["utilization"] = utilization
-            print(f"Updated utilization: {utilization}")
+            # print(f"Updated utilization: {utilization}")
 
         # Bloco 3: Run-Length Encoding e cálculos de fragmentação
         # Chamar rle com array NumPy compatível com Cython e converter resultados para listas
         initial_indices_np, values_np, lengths_np = rle(slot_allocation)
-        print(f"RLE initial indices: {initial_indices_np}, values: {values_np}, lengths: {lengths_np}")
+        # print(f"RLE initial indices: {initial_indices_np}, values: {values_np}, lengths: {lengths_np}")
 
         # Verificar sincronização
         if len(initial_indices_np) != len(lengths_np):
-            print(f"Error: initial_indices and lengths have different lengths!")
+            # print(f"Error: initial_indices and lengths have different lengths!")
             raise ValueError("initial_indices and lengths have different lengths")
 
         initial_indices = initial_indices_np.tolist()
         values = values_np.tolist()
         lengths = lengths_np.tolist()
-        print(f"Initial indices: {initial_indices}, Values: {values}, Lengths: {lengths}")
+        # print(f"Initial indices: {initial_indices}, Values: {values}, Lengths: {lengths}")
 
         # Calcular fragmentação externa
         unused_blocks = [i for i, x in enumerate(values) if x == 1]
-        print(f"Unused blocks: {unused_blocks}")
+        # print(f"Unused blocks: {unused_blocks}")
 
         if len(unused_blocks) > 1 and unused_blocks != [0, len(values) - 1]:
             max_empty = max([lengths[i] for i in unused_blocks])
         else:
             max_empty = 0
 
-        print(f"Max empty block size: {max_empty}")
+        # print(f"Max empty block size: {max_empty}")
 
         if np.sum(slot_allocation) > 0:
             # Calculando a fragmentação externa corretamente
@@ -1097,11 +1098,11 @@ cdef class QRMSAEnv:
             cur_external_fragmentation = 1.0 - (<double> max_empty / <double> total_unused_slots)
         else:
             cur_external_fragmentation = 1.0
-        print(f"Current external fragmentation: {cur_external_fragmentation}")
+        # print(f"Current external fragmentation: {cur_external_fragmentation}")
 
         # Calcular compactação espectral do link
         used_blocks = [i for i, x in enumerate(values) if x == 0]
-        print(f"Used blocks: {used_blocks}, type of initial_indices: {type(initial_indices)}, type of lengths: {type(lengths)}")
+        # print(f"Used blocks: {used_blocks}, type of initial_indices: {type(initial_indices)}, type of lengths: {type(lengths)}")
 
         if isinstance(initial_indices, list) and isinstance(lengths, list):
             if len(used_blocks) > 1:
@@ -1109,11 +1110,11 @@ cdef class QRMSAEnv:
                 valid = True
                 for idx in used_blocks:
                     if not isinstance(idx, int):
-                        print(f"Invalid index type in used_blocks: {idx} (type: {type(idx)})")
+                        # print(f"Invalid index type in used_blocks: {idx} (type: {type(idx)})")
                         valid = False
                         break
                     if idx < 0 or idx >= len(initial_indices):
-                        print(f"Index out of range in used_blocks: {idx}")
+                        # print(f"Index out of range in used_blocks: {idx}")
                         valid = False
                         break
                 if not valid:
@@ -1127,11 +1128,11 @@ cdef class QRMSAEnv:
                 allocation_size = slot_allocation.shape[0]  # Mantém como inteiro
 
                 if lambda_min < 0 or lambda_max > allocation_size:
-                    print(f"Error: lambda_min ({lambda_min}) or lambda_max ({lambda_max}) out of bounds for slot_allocation size {allocation_size}")
+                    # print(f"Error: lambda_min ({lambda_min}) or lambda_max ({lambda_max}) out of bounds for slot_allocation size {allocation_size}")
                     raise IndexError("lambda_min ou lambda_max fora dos limites")
 
                 if lambda_min >= lambda_max:
-                    print(f"Error: lambda_min ({lambda_min}) >= lambda_max ({lambda_max})")
+                    # print(f"Error: lambda_min ({lambda_min}) >= lambda_max ({lambda_max})")
                     raise ValueError("lambda_min >= lambda_max")
 
                 # Slicing usando memory views
@@ -1140,7 +1141,7 @@ cdef class QRMSAEnv:
 
                 # Avaliar a parte usada do espectro
                 internal_idx_np, internal_values_np, internal_lengths_np = rle(sliced_slot_allocation_np)
-                print(f"RLE Output - Initial Indices: {internal_idx_np}, Values: {internal_values_np}, Lengths: {internal_lengths_np}")
+                # print(f"RLE Output - Initial Indices: {internal_idx_np}, Values: {internal_values_np}, Lengths: {internal_lengths_np}")
 
                 internal_values = internal_values_np.tolist()  # Converter para listas
                 unused_spectrum_slots = <double> np.sum(1 - internal_values_np)
@@ -1154,7 +1155,7 @@ cdef class QRMSAEnv:
             else:
                 cur_link_compactness = 1.0
         else:
-            print(f"Error: initial_indices or lengths are not lists/arrays!")
+            # print(f"Error: initial_indices or lengths are not lists/arrays!")
             raise TypeError("initial_indices or lengths are not lists/arrays")
 
 
@@ -1177,8 +1178,8 @@ cdef class QRMSAEnv:
         cdef list indices
         cdef cnp.ndarray available_slots_matrix
         cdef cnp.ndarray product
-        cdef long[:, :] slots_view
-        cdef long[:] product_view
+        cdef int[:, :] slots_view
+        cdef int[:] product_view
         cdef Py_ssize_t num_rows, num_cols
 
         n = len(node_list) - 1

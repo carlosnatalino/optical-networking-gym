@@ -25,7 +25,7 @@ random.seed(seed)
 
 # Service.__lt__ = service_lt  # Add the __lt__ method to the Service class
 
-def parse_arguments():
+def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Optical Network Simulation')
 
     parser.add_argument(
@@ -47,13 +47,6 @@ def parse_arguments():
         type=int,
         default=1000,
         help='Number of arrivals per episode to be generated (default: 1000)'
-    )
-
-    parser.add_argument(
-        '-l', '--load',
-        type=int,
-        default=210,
-        help='Load to be used in the simulation (default: 210)'
     )
 
     parser.add_argument(
@@ -112,11 +105,11 @@ def define_modulations() -> Tuple[Modulation, ...]:
     )
 
 def get_loads(topology_name: str) -> np.ndarray:
-    if topology_name == "nobel-eu":
+    if topology_name == "nobel-eu.xml":
         return np.arange(50, 651, 50)
-    elif topology_name == "germany50":
+    elif topology_name == "germany50.xml":
         return np.arange(300, 801, 50)
-    elif topology_name == "janos-us":
+    elif topology_name == "janos-us.xml":
         return np.arange(100, 601, 50)
     elif topology_name == "nsfnet_chen.txt":
         return np.arange(100, 601, 50)
@@ -126,13 +119,12 @@ def get_loads(topology_name: str) -> np.ndarray:
 def prepare_env_args(
     n_eval_episodes: int,
     topology: object,
-    load: int,
     episode_length: int,
     launch_power: float,
     bandwidth: float,
     frequency_start: float,
     frequency_slot_bandwidth: float,
-    bit_rates: np.ndarray,
+    bit_rates: tuple[int, ...],
     margin: int,
     loads: np.ndarray,
     strategies: List[int]
@@ -143,7 +135,7 @@ def prepare_env_args(
             sim_args = (
                 n_eval_episodes,
                 strategy,
-                f"examples/jocn_benchmark_2024/results/load_episodes_{strategy}",
+                f"examples/JOCN_Benchmark_2024/results/load_episodes_{strategy}",
                 topology,
                 10,
                 True,
@@ -157,20 +149,19 @@ def prepare_env_args(
                 "discrete",
                 bit_rates,
                 margin,
-                f"examples/jocn_benchmark_2024/results/load_services_{strategy}",
+                f"examples/JOCN_Benchmark_2024/results/load_services_{strategy}",
                 False,
             )
             env_args.append(sim_args)
     return env_args
 
-def main():
+def main() -> None:
     args = parse_arguments()
 
     # Assign arguments to variables
     topology_name = args.topology_file
     n_eval_episodes = args.num_episodes
     episode_length = args.episode_length
-    load = args.load
     threads = args.threads
 
     launch_power = -4.0
@@ -184,19 +175,13 @@ def main():
     # Load topology
     topology = get_topology(
         os.path.join("examples", "topologies", topology_name),
-        "NSFNET",                # Name of the topology, adjust if necessary
+        None,                # Name of the topology, adjust if necessary
         cur_modulations,         # Tuple of modulation formats
         80,                      # Maximum span length in km
         0.2,                     # Default attenuation in dB/km
         4.5,                     # Default noise figure in dB
         5                        # Number of shortest paths to compute between node pairs
     )
-
-    # Simulation parameters
-    attenuation_db_km = 0.2
-    default_attenuation_normalized = attenuation_db_km / (2 * 10 * np.log10(np.exp(1)) * 1e3)
-    default_noise_figure_db = 4.5
-    default_noise_figure = 10 ** (default_noise_figure_db / 10)
 
     bandwidth = 4e12
     frequency_start = 3e8 / 1565e-9
@@ -212,7 +197,6 @@ def main():
     env_args = prepare_env_args(
         n_eval_episodes,
         topology,
-        load,
         episode_length,
         launch_power,
         bandwidth,

@@ -25,7 +25,7 @@ random.seed(seed)
 
 # Service.__lt__ = service_lt  # Add the __lt__ method to the Service class
 
-def parse_arguments():
+def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Optical Network Simulation')
 
     parser.add_argument(
@@ -43,17 +43,17 @@ def parse_arguments():
     )
 
     parser.add_argument(
-        '-s', '--episode_length',
-        type=int,
-        default=1000,
-        help='Number of arrivals per episode to be generated (default: 1000)'
-    )
-
-    parser.add_argument(
         '-l', '--load',
         type=int,
         default=210,
         help='Load to be used in the simulation (default: 210)'
+    )
+
+    parser.add_argument(
+        '-s', '--episode_length',
+        type=int,
+        default=1000,
+        help='Number of arrivals per episode to be generated (default: 1000)'
     )
 
     parser.add_argument(
@@ -111,72 +111,17 @@ def define_modulations() -> Tuple[Modulation, ...]:
         ),
     )
 
-def get_loads(topology_name: str) -> np.ndarray:
-    if topology_name == "nobel-eu":
-        return np.arange(50, 651, 50)
-    elif topology_name == "germany50":
-        return np.arange(300, 801, 50)
-    elif topology_name == "janos-us":
-        return np.arange(100, 601, 50)
-    elif topology_name == "nsfnet_chen.txt":
-        return np.arange(100, 601, 50)  # Adjust as needed
-    else:
-        raise ValueError(f"Unknown topology name: {topology_name}")
-
-def prepare_env_args(
-    n_eval_episodes: int,
-    topology: object,
-    load: int,
-    episode_length: int,
-    launch_power: float,
-    bandwidth: float,
-    frequency_start: float,
-    frequency_slot_bandwidth: float,
-    bit_rates: np.ndarray,
-    margin: float,  # Changed to float to match margins array
-    loads: np.ndarray,
-    strategies: List[int]
-) -> List[Tuple]:
-    env_args = []
-    for current_load in loads:
-        for strategy in strategies:
-            sim_args = (
-                n_eval_episodes,
-                strategy,
-                f"examples/jocn_benchmark_2024/results/mr_episodes_{strategy}_{margin}",
-                topology,
-                10,
-                True,
-                current_load,
-                episode_length,
-                320,
-                launch_power,
-                bandwidth,
-                frequency_start,
-                frequency_slot_bandwidth,
-                "discrete",
-                bit_rates,
-                margin,
-                f"examples/jocn_benchmark_2024/results/mr_services_{strategy}_{margin}",
-                False,
-            )
-            env_args.append(sim_args)
-    return env_args
-
-def main():
+def main() -> None:
     args = parse_arguments()
 
     # Assign arguments to variables
     topology_name = args.topology_file
     n_eval_episodes = args.num_episodes
-    episode_length = args.episode_length
     load = args.load
+    episode_length = args.episode_length
     threads = args.threads
 
     launch_power = -4.0
-
-    # Define load ranges based on topology
-    loads = get_loads(topology_name)
 
     # Define modulation formats
     cur_modulations = define_modulations()
@@ -184,7 +129,7 @@ def main():
     # Load topology using get_topology
     topology = get_topology(
         os.path.join("examples", "topologies", topology_name),
-        "NSFNET",                # Name of the topology, adjust if necessary
+        None,                # Name of the topology, adjust if necessary
         cur_modulations,         # Tuple of modulation formats
         80,                      # Maximum span length in km
         0.2,                     # Default attenuation in dB/km
@@ -197,27 +142,33 @@ def main():
     frequency_start = 3e8 / 1565e-9
     frequency_end = frequency_start + bandwidth
     frequency_slot_bandwidth = 12.5e9
-    bit_rates =(10, 40, 100, 400)
-    margins = np.arange(0, 2.1, 0.5) 
+    bit_rates = (10, 40, 100, 400)
+    margins = np.arange(0, 2.1, 0.5)
 
-    strategies = list(range(1, 5))
+    strategy = 1
 
     env_args = []
     for margin in margins:
-        env_args.extend(
-            prepare_env_args(
+        env_args.append(
+            (
                 n_eval_episodes,
+                strategy,
+                f"examples/jocn_benchmark_2024/results/mr_episodes_{strategy}_{margin}",
                 topology,
+                10,
+                True,
                 load,
                 episode_length,
+                320,
                 launch_power,
                 bandwidth,
                 frequency_start,
                 frequency_slot_bandwidth,
+                "discrete",
                 bit_rates,
                 margin,
-                loads,
-                strategies
+                f"examples/jocn_benchmark_2024/results/mr_services_{strategy}_{margin}",
+                False,
             )
         )
 
