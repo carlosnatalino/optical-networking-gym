@@ -50,6 +50,12 @@ To install the development dependencies, after the installation steps above, run
 pip install -e ".[dev]"
 ```
 
+When you make changes to pyx files, you must compile the code using:
+
+```bash
+python setup.py clean --all build_ext --force --inplace
+```
+
 To build and run tests:
 
 ```bash
@@ -76,3 +82,20 @@ After that, we can accept pull requests.
 # Maintainers
 
 - Carlos Natalino <carlos.natalino@chalmers.se>
+
+# Citing
+
+To cite this work, use the following reference:
+
+```
+@ARTICLE{Natalino_2024_gym,
+  author={Natalino, Carlos and Magalhaes, Talles and Arpanaei, Farhad and Lobato, Fabricio R. L. and Costa, Joao C. W. A. and Hernandez, Jose Alberto and Monti, Paolo},
+  journal={Journal of Optical Communications and Networking}, 
+  title={{Optical Networking Gym}: an open-source toolkit for resource assignment problems in optical networks}, 
+  year={2024},
+  volume={16},
+  number={12},
+  pages={G40-G51},
+  doi={10.1364/JOCN.532850},
+}
+```
