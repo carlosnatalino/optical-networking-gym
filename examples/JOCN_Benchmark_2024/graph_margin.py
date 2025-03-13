@@ -153,7 +153,7 @@ def main() -> None:
             (
                 n_eval_episodes,
                 strategy,
-                f"examples/jocn_benchmark_2024/results/mr_episodes_{strategy}_{margin}",
+                f"examples/JOCN_Benchmark_2024/results/mr_episodes_{strategy}_{margin}",
                 topology,
                 10,
                 True,
@@ -167,7 +167,7 @@ def main() -> None:
                 "discrete",
                 bit_rates,
                 margin,
-                f"examples/jocn_benchmark_2024/results/mr_services_{strategy}_{margin}",
+                f"examples/JOCN_Benchmark_2024/results/mr_services_{strategy}_{margin}",
                 False,
             )
         )

@@ -141,7 +141,7 @@ def main():
         sim_args = (
             args.num_episodes,
             1,
-            "examples/jocn_benchmark_2024/results/lp_episodes_1",
+            "examples/JOCN_Benchmark_2024/results/lp_episodes_1",
             topology,
             10,
             True,
@@ -155,7 +155,7 @@ def main():
             "discrete",
             bit_rates,
             0,  # margin
-            "examples/jocn_benchmark_2024/results/lp_services_1",
+            "examples/JOCN_Benchmark_2024/results/lp_services_1",
             True,
         )
         env_args.append(sim_args)
