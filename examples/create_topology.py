@@ -164,20 +164,27 @@ def get_topology(
                 else:
                     selected_modulations = [None for _ in lengths]
                 objs = []
-
+                k = 0
                 for path, length, modulation in zip(
                     paths, lengths, selected_modulations
                 ):
+                    links = []
+                    for i in range(len(path) - 1):
+                        links.append(topology[path[i]][path[i + 1]]["link"])
                     objs.append(
                         Path(
                             idp,
+                            k,
                             tuple(path),
+                            tuple(links),
+                            len(path),
                             length,
                             modulation,
                         )
                     )  # <== The topology is created and a best modulation is just automatically attached.  In our new implementation, the best modulation will be variable depending on available resources and the amount of crosstalk it will cause.
                     print("\t", objs[-1])
                     idp += 1
+                    k += 1
                 k_shortest_paths[n1, n2] = objs
                 k_shortest_paths[n2, n1] = objs
     topology.graph["name"] = topology_name

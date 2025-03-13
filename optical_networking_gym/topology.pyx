@@ -2,8 +2,8 @@ from itertools import islice
 import math
 from typing import Optional, Union, Tuple, Sequence
 import xml.dom.minidom
+import os
 
-import cython
 import networkx as nx
 import numpy as np
 
@@ -128,10 +128,10 @@ def calculate_geographical_distance(
 ) -> float:
     r = 6373.0
 
-    lat1 = math.radians(latlong1[0])
-    lon1 = math.radians(latlong1[1])
-    lat2 = math.radians(latlong2[0])
-    lon2 = math.radians(latlong2[1])
+    lat1 = math.radians(latlong1[1])
+    lon1 = math.radians(latlong1[0])
+    lat2 = math.radians(latlong2[1])
+    lon2 = math.radians(latlong2[0])
 
     dlon = lon2 - lon1
     dlat = lat2 - lat1
@@ -243,7 +243,7 @@ def read_txt_file(file_name: str) -> nx.Graph:
 
 def get_topology(
     file_path: str,
-    topology_name: str,
+    topology_name: str | None = None,
     modulations: Optional[Tuple[Modulation]] = None,
     max_span_length: float = 100,
     default_attenuation: float = 0.2,
@@ -276,6 +276,10 @@ def get_topology(
         topology = read_txt_file(file_path)
     else:
         raise ValueError("Supplied topology format is unknown")
+
+    if topology_name is None:
+        # Extract the filename from the path, ignoring folders and file extension
+        topology_name = os.path.splitext(os.path.basename(file_path))[0]
 
     # Generating the spans and links
     topology.graph["has_links_object"] = True
