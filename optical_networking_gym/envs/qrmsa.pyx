@@ -941,10 +941,10 @@ cdef class QRMSAEnv:
             self.file_stats.write(line)
             self.file_stats.flush()
 
-        if not action == (self.action_space.n - 1):
+        if action != (self.action_space.n - 1):
             reward = self.reward()
         else:
-            reward = -6.0
+            reward = -3.0
         info = {
             "episode_services_accepted": self.episode_services_accepted,
             "service_blocking_rate": 0.0,
@@ -1156,25 +1156,16 @@ cdef class QRMSAEnv:
         return True
 
     cpdef double reward(self):
-        cdef double reward_value = 0.0
-        cdef double failed_ratio = (self.episode_services_processed - self.episode_services_accepted) / float(self.episode_services_processed)
+        cdef double base_reward = 0.0
+        if self.current_service.accepted:
+            base_reward = 1.0
+            base_reward += 0.1 * self.current_service.current_modulation.spectral_efficiency
 
-        if not self.current_service.accepted:
-            return -3.0 * (1.0 + failed_ratio)
-
-        reward_value = 1.0
-
-        cdef double current_se = self.current_service.current_modulation.spectral_efficiency
-        reward_value += 0.1 * current_se
-
-        cdef double osnr_margin = self.current_service.OSNR - self.current_service.current_modulation.minimum_osnr
-        if osnr_margin > 0:
-            reward_value -= 0.1 * (osnr_margin ** 0.5)
-
-        if reward_value > 3.0:
-            reward_value = 3.0
-        elif reward_value < -3.0:
-            reward_value = -3.0
+        else:
+            base_reward = -1.5
+            
+        return base_reward
+            
 
     
     cpdef _provision_path(self, object path, cnp.int64_t initial_slot, int number_slots):
@@ -1436,3 +1427,4 @@ cdef class QRMSAEnv:
 
     def close(self):
         return super().close()
+\

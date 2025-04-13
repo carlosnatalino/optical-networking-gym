@@ -56,7 +56,7 @@ def create_environment_config():
     # Topologia e modulações
     cur_modulations = define_modulations()
     topology_name = "nobel-eu"
-    topology_path = r"examples/topologies/nobel-eu.xml"
+    topology_path = r"/home/talles/projects/optical-networking-gym/examples/topologies/nobel-eu.xml"
     topology = get_topology(
         topology_path,
         topology_name,
@@ -101,7 +101,7 @@ def create_environment_config():
         modulations_to_consider=2,
     )
 
-    num_envs = 2#16  # 14 threads/ambientes paralelos
+    num_envs = 17#16  # 14 threads/ambientes paralelos
     return topology, env_args, seed, num_envs
 
 
@@ -150,9 +150,9 @@ class SingleCallback(BaseCallback):
         self, 
         max_episodes: int = 10_000,
         # Parâmetros do scheduler de ent_coef
-        initial_ent_coef: float = 0.04,
-        final_ent_coef: float = 0.001,
-        schedule_timesteps: int = 9_000_000,
+        initial_ent_coef: float = 0.05,
+        final_ent_coef: float = 0.01,
+        schedule_timesteps: int = 7_500_000,
         # Parâmetros do ExplorationBoost
         check_interval: int = 200,
         threshold: float = 0.1,
@@ -355,25 +355,22 @@ def main():
     # Cria vetorização em Subprocessos (14 threads)
     vec_env = SubprocVecEnv([make_env(env_id, i, seed, env_args) for i in range(num_envs)])
 
-    # (B) Definir política, rede e parâmetros de PPO com base em experiência
-    # Otimizados para 10.000 episódios de 1000 steps cada => 10 milhões de steps
-    # Sugerimos LR menor, batch_size robusto, etc.
     def linear_schedule(initial_value: float):
         def func(progress_remaining: float):
             return progress_remaining * initial_value
         return func
 
-    policy_kwargs = dict(net_arch=dict(pi=[512, 256, 128], vf=[512, 256, 128]))
+    policy_kwargs = dict(net_arch=dict(pi=[256, 256, 256], vf=[256, 256, 256]))
 
     model = MaskablePPO(
         policy="MlpPolicy",
         env=vec_env,
-        learning_rate=linear_schedule(5e-4),  # LR decai linearmente até 0
-        n_steps=1000,
+        learning_rate=linear_schedule(2e-4),
+        n_steps=500,
         batch_size=125,
         gamma=0.99,
         gae_lambda=0.96,
-        ent_coef=0.04,
+        ent_coef=0.05,
         clip_range=0.2,
         verbose=1,
         seed=42,

@@ -89,7 +89,7 @@ def create_environment():
     """
     # Topologia (caminho usado no PPO) e modulações
     topology_name = "ring_4"  # Nome de referência
-    topology_path = rf"C:\Users\talle\Documents\Mestrado\optical-networking-gym\examples\topologies\nobel-eu.xml"#ring_4.txt"
+    topology_path = r"/home/talles/projects/optical-networking-gym/examples/topologies/nobel-eu.xml"
     cur_modulations = define_modulations()
 
     # Cria objeto de topologia
@@ -112,10 +112,10 @@ def create_environment():
         topology=topology,
         seed=seed,
         allow_rejection=True,
-        load=210,                    # Mesmo load do PPO
-        episode_length=100,         # Mesmo episode_length do PPO
+        load=300,                    # Mesmo load do PPO
+        episode_length=1000,         # Mesmo episode_length do PPO
         num_spectrum_resources=320,  # Mesmo número de slots do PPO
-        launch_power_dbm=0,          # Mesmo launch power do PPO
+        launch_power_dbm=1,          # Mesmo launch power do PPO
         frequency_slot_bandwidth=12.5e9,
         frequency_start=3e8 / 1565e-9,
         bandwidth= 320* 12.5e9,
@@ -149,7 +149,7 @@ def run_first_fit_environment(
     :param csv_output: caminho do CSV de saída.
     """
     # Seleciona a função da heurística (first-fit)
-    fn_heuristic = heuristic_from_mask#shortest_available_path_first_fit_best_modulation
+    fn_heuristic = shortest_available_path_first_fit_best_modulation
     # fn_heuristic = best_modulation_load_balancing
     
     # Cria instância do ambiente
@@ -198,7 +198,7 @@ def run_first_fit_environment(
 
             while not done:
                 # print(f"current service: {env.unwrapped.env.current_service}")
-                action, bl_osnr, bl_resource = fn_heuristic(env.unwrapped.env, info["mask"]), 0 ,0 
+                action, bl_osnr, bl_resource = fn_heuristic( info["mask"]), 0 ,0 
                 if bl_osnr:
                     osnr_count += 1
                 if bl_resource:
