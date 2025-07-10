@@ -490,7 +490,7 @@ cdef class QRMSAEnv:
         info = mask.copy()
         return observation, info
     
-    def normalize_value(self, value, min_v, max_v):
+    cpdef public normalize_value(self, value, min_v, max_v):
         """
         Normaliza um valor no intervalo [0,1]. 
         Se max_v == min_v, retorna 0 para evitar divisão por zero.
@@ -499,7 +499,7 @@ cdef class QRMSAEnv:
             return 0.0
         return (value - min_v) / (max_v - min_v)
     
-    def _get_candidates(self, available_slots, num_slots_required, total_slots):
+    cpdef public _get_candidates(self, available_slots, num_slots_required, total_slots):
         """
         Gera todos os candidatos (initial slot) para alocação, usando RLE.
         Se o bloco se estende até o final, não exige guard band; caso contrário,
@@ -527,7 +527,7 @@ cdef class QRMSAEnv:
                             candidates.append(candidate)
         return candidates
 
-    def get_max_modulation_index(self):
+    cpdef public get_max_modulation_index(self):
         """
         Atualiza self.max_modulation_idx com a melhor modulação (maior índice) cuja alocação
         apresenta OSNR aceitável (>= limiar + margin). Usa a mesma lógica de geração de candidatos.
@@ -769,7 +769,7 @@ cdef class QRMSAEnv:
 
 
 
-    def decimal_to_array(self, decimal: int, max_values: list[int] = None) -> list[int]:
+    cpdef decimal_to_array(self, decimal: int, max_values=None):
         if max_values is None:
             max_values = [self.k_paths, self.modulations_to_consider, self.num_spectrum_resources]       
         array = []
@@ -785,7 +785,7 @@ cdef class QRMSAEnv:
         # print(f"k:{self.k_shortest_paths[self.current_service.source,self.current_service.destination][array[0]]}, mod: {self.modulations[array[1]]}, slot: {array[2]}")
         return array
 
-    def encoded_decimal_to_array(self, decimal: int, max_values: list[int] = None) -> list[int]:
+    cpdef encoded_decimal_to_array(self, decimal: int, max_values=None):
         # Usa divisão inteira para garantir um valor inteiro para part_size.
         part_size = self.num_spectrum_resources // self.modulations_to_consider  
         mod_idx = decimal // part_size  # Calculado mas não usado para modulação
@@ -1171,7 +1171,7 @@ cdef class QRMSAEnv:
             return int(math.ceil(required_slots))
 
 
-    def is_path_free(self, path: Path, initial_slot: int, number_slots: int) -> bool:
+    cpdef public is_path_free(self, path, initial_slot: int, number_slots: int):
         end = initial_slot + number_slots
         if end  > self.num_spectrum_resources:
             return False
@@ -1269,7 +1269,7 @@ cdef class QRMSAEnv:
         release_time = service.arrival_time + service.holding_time
         heapq.heappush(self._events, (release_time, service.service_id, service))
     
-    def _release_path(self, service: Service):
+    cpdef public _release_path(self, service: Service):
         for i in range(len(service.path.node_list) - 1):
             self.topology.graph["available_slots"][
                 self.topology[service.path.node_list[i]][service.path.node_list[i + 1]][
@@ -1580,5 +1580,5 @@ cdef class QRMSAEnv:
 
 
 
-    def close(self):
+    cpdef public close(self):
         return super().close()

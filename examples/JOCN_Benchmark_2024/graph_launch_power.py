@@ -96,7 +96,7 @@ def run_environment(
     )
 
     # Seleção da heurística baseada no índice
-    fn_heuristic = None
+    fn_heuristic = 4
     if heuristic == 1:
         fn_heuristic = heuristic_shortest_available_path_first_fit_best_modulation
     elif heuristic == 2:
@@ -147,7 +147,7 @@ def run_environment(
             start_time = time.time()
 
             while not done:
-                action,_,_  = fn_heuristic(env)
+                action,_,_ = fn_heuristic(env)
                 _, _, done, _, info = env.step(action)
             
             end_time = time.time()
@@ -215,7 +215,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         '-th', '--threads',
         type=int,
-        default= 10,
+        default= 1,
         help='Number of threads to be used for running simulations (default: 2)'
     )
 
@@ -300,9 +300,9 @@ def main():
     default_noise_figure_db = 4.5
 
     # Carregamento da topologia
-    topology_path = os.path.join(
-         "examples", "topologies", args.topology_file
-     )
+    topology_path =  r'examples/topologies/germany50.xml'#os.path.join(
+    #      "examples", "topologies", args.topology_file
+    #  )
     if not os.path.exists(topology_path):
         raise FileNotFoundError(f"Topology file '{topology_path}' not found.")
 

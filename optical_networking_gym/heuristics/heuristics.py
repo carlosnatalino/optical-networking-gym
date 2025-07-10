@@ -455,13 +455,10 @@ def shortest_available_path_lowest_spectrum_best_modulation(
                 if osnr >= modulation.minimum_osnr + qrmsa_env.margin:
                     # Converter para índice de ação
                     action = get_action_index(qrmsa_env, idp, idm, initial_slot)
-                    return action
+                    return action, False, False  # ou uma ação padrão específica
 
     # Se nenhuma ação válida encontrada, retornar a ação de rejeição se permitido
-    if qrmsa_env.allow_rejection:
-        return qrmsa_env.reject_action
-    else:
-        return None  # ou uma ação padrão específica
+    return qrmsa_env.reject_action, False, False  # ou uma ação padrão específica
 
 def best_modulation_load_balancing(
     env: Env,
@@ -514,10 +511,10 @@ def best_modulation_load_balancing(
                 if osnr >= modulation.minimum_osnr + qrmsa_env.margin:
                     # Converter para índice de ação
                     action = get_action_index(qrmsa_env, idp, idm, initial_slot)
-                    return action
+                    return action, False, False  # ou uma ação padrão específica
 
     # Se nenhuma ação válida encontrada, retornar a ação de rejeição se permitido
-    return qrmsa_env.reject_action
+    return qrmsa_env.reject_action, False, False
 
 def load_balancing_best_modulation(
     env: Env,
@@ -582,10 +579,6 @@ def load_balancing_best_modulation(
 
     # Retornar a melhor solução encontrada
     if solution is not None:
-        return solution
+        return solution, False, False
 
-    # Se nenhuma ação válida encontrada, retornar a ação de rejeição se permitido
-    if qrmsa_env.allow_rejection:
-        return qrmsa_env.reject_action
-    else:
-        return None  # ou uma ação padrão específica
+    return qrmsa_env.reject_action, False, False  # ou uma ação padrão específica
