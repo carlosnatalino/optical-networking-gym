@@ -277,6 +277,176 @@ HYPERPARAMS_STABLE = PPOHyperparameters(
     tensorboard_log="./tensorboard_logs"
 )
 
+# Configuração LOW_PB - Otimizado para baixa probabilidade de bloqueio (<1%)
+HYPERPARAMS_LOW_PB = PPOHyperparameters(
+    learning_rate=linear_schedule(2e-4),  # LR moderado com decay
+    n_steps=4096,        # Horizonte longo para melhor credit assignment
+    batch_size=512,      # Batches grandes para estabilidade
+    n_epochs=20,         # Muitas epochs para otimização profunda
+    gamma=0.998,         # Gamma muito alto para valorizar futuro
+    gae_lambda=0.98,     # GAE alto para melhor estimativa
+    clip_range=0.15,     # Clipping moderado (não muito agressivo)
+    clip_range_vf=None,
+    ent_coef=0.005,      # Pouca entropia para exploração controlada
+    vf_coef=0.8,         # Value function mais importante
+    max_grad_norm=0.7,   # Gradient clipping menos agressivo
+    policy_kwargs={
+        "net_arch": {
+            "pi": [512, 512, 384, 256],  # Rede profunda para policy
+            "vf": [512, 512, 384, 256]   # Rede profunda para value
+        },
+        "activation_fn": nn.ReLU
+    },
+    verbose=1,
+    tensorboard_log="./tensorboard_logs"
+)
+
+HYPERPARAMS_LOW_PB_STABLE = PPOHyperparameters(
+    learning_rate=constant_schedule(1e-4),  # LR baixo e constante para maior estabilidade
+    n_steps=4096,
+    batch_size=512,
+    n_epochs=10,
+    gamma=0.995,
+    gae_lambda=0.97,
+    clip_range=0.12,
+    clip_range_vf=0.12,
+    ent_coef=0.003,
+    vf_coef=0.7,
+    max_grad_norm=0.3,
+    policy_kwargs={
+        "net_arch": {"pi": [512, 512, 256], "vf": [512, 512, 256]},
+        "activation_fn": nn.Tanh,
+        "ortho_init": False
+    },
+    verbose=1,
+    tensorboard_log="./tensorboard_logs"
+)
+
+HYPERPARAMS_LOW_PB_HYBRID = PPOHyperparameters(
+    learning_rate=linear_schedule(2.5e-4),  # LR inicia alto e decai suavemente
+    n_steps=4096,
+    batch_size=512,
+    n_epochs=15,
+    gamma=0.997,
+    gae_lambda=0.975,
+    clip_range=0.15,
+    clip_range_vf=0.15,
+    ent_coef=0.006,
+    vf_coef=0.7,
+    max_grad_norm=0.4,
+    policy_kwargs={
+        "net_arch": {"pi": [512, 512, 256], "vf": [512, 512, 256]},
+        "activation_fn": nn.ReLU,
+        "ortho_init": True
+    },
+    verbose=1,
+    tensorboard_log="./tensorboard_logs"
+)
+
+# Configuração INTENSIVE V2 - Otimizado baseado em análise empírica
+# Melhora o INTENSIVE original com ajustes para convergência mais rápida e estável
+HYPERPARAMS_INTENSIVE_V2 = PPOHyperparameters(
+    learning_rate=linear_schedule(4e-4),  # LR inicial maior para aprendizado rápido
+    n_steps=4096,        # Horizonte longo mantido (bom para credit assignment)
+    batch_size=1024,     # Batch MAIOR para updates mais estáveis com 44 envs
+    n_epochs=12,         # Reduzido de 15 → 12 (menos overfitting por update)
+    gamma=0.996,         # Entre 0.995 e 0.997 (melhor trade-off)
+    gae_lambda=0.97,     # Reduzido de 0.98 (menos bias, mais estável)
+    clip_range=0.2,      # Clipping padrão (0.2 é sweet spot comprovado)
+    clip_range_vf=None,  # SEM clipping da VF (permite ajuste livre)
+    ent_coef=0.01,       # Entropia moderada para exploração inicial
+    vf_coef=0.6,         # Aumentado de 0.5 (value function mais importante)
+    max_grad_norm=0.7,   # Aumentado para permitir gradientes maiores
+    policy_kwargs={
+        "net_arch": {
+            "pi": [512, 512, 384],  # Policy: 3 camadas (512→512→384)
+            "vf": [512, 512, 384]   # Value: mesma arquitetura
+        },
+        "activation_fn": nn.ReLU,
+        "ortho_init": True  # Inicialização ortogonal para estabilidade
+    },
+    verbose=1,
+    tensorboard_log="./tensorboard_logs"
+)
+
+# Configuração INTENSIVE BALANCED - Próxima ao baseline original com refinamentos
+HYPERPARAMS_INTENSIVE_BALANCED = PPOHyperparameters(
+    learning_rate=exponential_schedule(3e-4, decay_rate=0.92),  # Decaimento mais rápido que o linear
+    n_steps=4096,
+    batch_size=768,      # Menos reuse de amostras por epoch
+    n_epochs=8,          # Reduz overfitting mantendo updates suficientes
+    gamma=0.996,
+    gae_lambda=0.97,
+    clip_range=0.2,
+    clip_range_vf=0.2,   # Clipa value function para conter explosões do crítico
+    ent_coef=0.008,      # Exploração moderada
+    vf_coef=0.55,        # Menor peso para VF em relação ao baseline original
+    max_grad_norm=0.6,
+    policy_kwargs={
+        "net_arch": {
+            "pi": [512, 512, 256],
+            "vf": [512, 512, 256]
+        },
+        "activation_fn": nn.ReLU,
+        "ortho_init": True
+    },
+    verbose=1,
+    tensorboard_log="./tensorboard_logs"
+)
+
+# Configuração ULTRA - Para experimentos de longo prazo (>50k episódios)
+# Máxima capacidade de representação e aprendizado profundo
+HYPERPARAMS_ULTRA = PPOHyperparameters(
+    learning_rate=linear_schedule(3.5e-4),  # LR moderado-alto com decay suave
+    n_steps=8192,        # Horizonte muito longo para planning complexo
+    batch_size=2048,     # Batches muito grandes (requer muita memória)
+    n_epochs=10,         # Menos epochs mas com batches maiores
+    gamma=0.997,         # Gamma alto para valorizar futuro distante
+    gae_lambda=0.975,    # GAE balanceado
+    clip_range=0.2,
+    clip_range_vf=None,
+    ent_coef=0.008,      # Entropia para manter exploração em treinos longos
+    vf_coef=0.7,         # Value function importante
+    max_grad_norm=0.8,   # Permite gradientes fortes
+    policy_kwargs={
+        "net_arch": {
+            "pi": [768, 512, 384, 256],  # Policy: 4 camadas profundas
+            "vf": [768, 512, 384, 256]   # Value: arquitetura profunda
+        },
+        "activation_fn": nn.ReLU,
+        "ortho_init": True,
+        "log_std_init": -0.5
+    },
+    verbose=1,
+    tensorboard_log="./tensorboard_logs"
+)
+
+# Configuração INTENSIVE_V2_REFINED - Baseado no melhor do primeiro treino + intensive_v2
+# 🔥 RECOMENDADO: Combina sucesso do primeiro treino (PB 0.3%) com velocidade do intensive_v2
+HYPERPARAMS_INTENSIVE_V2_REFINED = PPOHyperparameters(
+    learning_rate=linear_schedule(3e-4),  # LR moderado (mesmo do primeiro treino)
+    n_steps=4096,        # Horizonte longo mantido
+    batch_size=1024,     # Batch grande do intensive_v2 (para 44 envs)
+    n_epochs=10,         # Reduzido de 12 → 10 (melhor estabilidade)
+    gamma=0.995,         # Entre primeiro treino e intensive_v2
+    gae_lambda=0.97,     # GAE estável
+    clip_range=0.2,      # Clipping padrão comprovado
+    clip_range_vf=0.2,   # Clipa VF para evitar explosões
+    ent_coef=0.005,      # Entropia baixa (já exploramos o suficiente)
+    vf_coef=0.65,        # Value function importante (entre 0.5 e 0.7)
+    max_grad_norm=0.5,   # Gradient clipping moderado
+    policy_kwargs={
+        "net_arch": {
+            "pi": [512, 512, 256],  # Policy: 3 camadas (comprovada)
+            "vf": [512, 512, 256]   # Value: mesma arquitetura
+        },
+        "activation_fn": nn.ReLU,
+        "ortho_init": True  # Inicialização ortogonal
+    },
+    verbose=1,
+    tensorboard_log="./tensorboard_logs"
+)
+
 
 def get_hyperparams(profile: str = "default") -> PPOHyperparameters:
     """
@@ -300,8 +470,15 @@ def get_hyperparams(profile: str = "default") -> PPOHyperparameters:
         "fast": HYPERPARAMS_FAST,
         "default": HYPERPARAMS_DEFAULT,
         "intensive": HYPERPARAMS_INTENSIVE,
+        "intensive_v2": HYPERPARAMS_INTENSIVE_V2,
+        "intensive_v2_refined": HYPERPARAMS_INTENSIVE_V2_REFINED,
+        "intensive_balanced": HYPERPARAMS_INTENSIVE_BALANCED,
+        "ultra": HYPERPARAMS_ULTRA,
         "high_exploration": HYPERPARAMS_HIGH_EXPLORATION,
-        "stable": HYPERPARAMS_STABLE
+        "stable": HYPERPARAMS_STABLE,
+        "low_pb": HYPERPARAMS_LOW_PB,
+        "low_pb_stable": HYPERPARAMS_LOW_PB_STABLE,
+        "low_pb_hybrid": HYPERPARAMS_LOW_PB_HYBRID
     }
     
     profile_lower = profile.lower()
@@ -378,8 +555,15 @@ def get_available_profiles() -> Dict[str, str]:
         "fast": "Configuração rápida para debugging e testes",
         "default": "Configuração padrão balanceada",
         "intensive": "Configuração intensiva para experimentos longos",
+        "intensive_v2": "INTENSIVE otimizado - LR 4e-4, batch 1024, epochs 12",
+        "intensive_v2_refined": "🔥 RECOMENDADO - Combina primeiro treino (PB 0.3%) com ajustes de estabilidade",
+        "intensive_balanced": "Baseline intensivo com decay mais rápido e VF clipado",
+        "ultra": "⚡ Configuração máxima - n_steps 8192, batch 2048, rede 768→512→384→256",
         "high_exploration": "Alta exploração para ambientes incertos",
-        "stable": "Convergência estável e conservadora"
+        "stable": "Convergência estável e conservadora",
+        "low_pb": "Otimizado para baixa probabilidade de bloqueio (<1%)",
+        "low_pb_stable": "⚠️ EVITAR - Baixa PB com clipping agressivo (performance ruim)",
+        "low_pb_hybrid": "Combina agressividade inicial com refinamento estável"
     }
 
 

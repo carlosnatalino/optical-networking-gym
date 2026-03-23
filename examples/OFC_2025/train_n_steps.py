@@ -30,7 +30,7 @@ from callbacks import create_callbacks
 
 # Imports SB3
 from stable_baselines3.common.callbacks import CallbackList
-from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecEnv
 from sb3_contrib import MaskablePPO
 from sb3_contrib.common.wrappers import ActionMasker
 
@@ -79,10 +79,10 @@ class TrainingConfig:
     n_episodes: int = 100
     
     # Ambientes paralelos
-    n_envs: int = 1  # APENAS 1 AMBIENTE
+    n_envs: int = 1  # Define 1 para debug; use >1 para SubprocVecEnv
     
     # Hiperparametros PPO (profile do hyperparams.py)
-    ppo_profile: str = "default"  # fast, default, intensive, high_exploration, stable
+    ppo_profile: str = "intensive_v2_refined"  # 🔥 Recomendado: intensive_v2_refined, intensive, default, fast
     
     # Diretorios
     base_dir: str = "./training_runs"
@@ -92,12 +92,16 @@ class TrainingConfig:
     log_freq: int = 1000  # A cada N steps
     
     # Verbose
-    verbose: int = 0
+    verbose: int = 0  # 0 para rodar em background sem muito output
 
 
 # ============================================================================
 # FUNCOES AUXILIARES
 # ============================================================================
+
+def _mask_fn(env):
+    return env.action_masks()
+
 
 def create_single_env(env_config: EnvConfig, seed: int = None):
     """Cria um unico ambiente QRMSA com action masking"""
@@ -120,23 +124,41 @@ def create_single_env(env_config: EnvConfig, seed: int = None):
     env = QRMSAEnvWrapper(**env_args)
     
     # Aplica action masking
-    def mask_fn(env):
-        return env.action_masks()
-    
-    env = ActionMasker(env, mask_fn)
+    env = ActionMasker(env, _mask_fn)
     
     return env
 
 
-def make_vec_env(env_config: EnvConfig, n_envs: int = 1) -> DummyVecEnv:
+def make_vec_env(env_config: EnvConfig, n_envs: int = 1) -> VecEnv:
     """Cria ambientes vetorizados"""
-    
-    def make_env(rank):
+    def make_env(rank: int):
         def _init():
             return create_single_env(env_config, seed=env_config.seed + rank)
         return _init
-    
-    return DummyVecEnv([make_env(i) for i in range(n_envs)])
+
+    env_fns = [make_env(i) for i in range(n_envs)]
+
+    if n_envs == 1:
+        return DummyVecEnv(env_fns)
+
+    import multiprocessing as mp
+
+    available_methods = mp.get_all_start_methods()
+    if "fork" in available_methods:
+        start_method = "fork"
+    elif "forkserver" in available_methods:
+        start_method = "forkserver"
+    else:
+        start_method = "spawn"
+
+    if start_method == "spawn":
+        print(
+            "[WARN] Multiprocessing start method 'spawn' is not compatible with "
+            "QRMSAEnv parallel execution. Falling back to DummyVecEnv."
+        )
+        return DummyVecEnv(env_fns)
+
+    return SubprocVecEnv(env_fns, start_method=start_method)
 
 
 # ============================================================================
@@ -232,7 +254,7 @@ def train(
     print("="*80 + "\n")
     
     # Usa um numero muito grande de timesteps, o callback vai parar no n_episodes
-    max_timesteps = 10_000_000
+    max_timesteps = 100_000_000
     
     try:
         model.learn(
@@ -263,6 +285,14 @@ def train(
 
 if __name__ == "__main__":
     
+    # Garante compatibilidade com Windows e scripts reaproveitados
+    import multiprocessing as mp
+    try:
+        mp.set_start_method("spawn")
+    except RuntimeError:
+        pass
+    mp.freeze_support()
+    
     print("\n" + "="*80)
     print(" CONFIGURACAO DO TREINAMENTO")
     print("="*80)
@@ -271,31 +301,41 @@ if __name__ == "__main__":
     env_cfg = EnvConfig(
         topology_name="nobel-eu",
         modulation_names="BPSK, QPSK, 8QAM, 16QAM, 32QAM, 64QAM",
-        modulations_to_consider=3,
+        modulations_to_consider=3,  
         num_spectrum_resources=320,
-        load=400, 
+        load=350, 
         episode_length=1000, 
         k_paths=3,
         defragmentation=False,
-        seed=42
+        seed=10
     )
     
     train_cfg = TrainingConfig(
-        n_episodes=1000,  # CRITERIO DE PARADA
-        n_envs=16,  # APENAS 1 AMBIENTE
-        ppo_profile="high_exploration",  # fast, default, intensive, high_exploration, stable
-        experiment_name=f"qrmsa_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-        log_freq=1000,
-        verbose=0
+        n_episodes=100_000,  # 🔥 TREINO COMPLETO visando fine-tuning prolongado
+        n_envs=44,  # 44 ambientes paralelos (máxima paralelização)
+        ppo_profile="intensive_v2_refined",  # 🔥 Perfil otimizado: LR 3e-4 (linear), batch 1024, epochs 10
+        base_dir="/home/talles/projects/optical-networking-gym/examples/OFC_2025/training_runs",
+        experiment_name=f"qrmsa_intensive_v2_refined_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+        log_freq=5000,  # Log a cada 5k steps
+        verbose=0  # Silencioso para rodar em background
     )
     
-    print("\n Configuracoes carregadas!")
-    print(f"   Experimento: {train_cfg.experiment_name}")
-    print(f"   Episodios: {train_cfg.n_episodes}")
-    print(f"   Load: {env_cfg.load} Erlangs (ALTA CARGA)")
-    print(f"   Episode length: {env_cfg.episode_length} steps")
-    print(f"   PPO Profile: {train_cfg.ppo_profile}")
-    print(f"   Callbacks: BlockingRate (P/B em %), Fragmentation, RewardStats")
+    print("\n" + "="*80)
+    print(" TREINAMENTO COMPLETO: INTENSIVE_V2_REFINED (75k episódios)")
+    print("="*80)
+    print(f"\n   Experimento: {train_cfg.experiment_name}")
+    print(f"   🎯 Meta: {train_cfg.n_episodes:,} episódios")
+    print(f"   🔧 PPO Profile: {train_cfg.ppo_profile} (OTIMIZADO)")
+    print(f"   🌐 Topologia: {env_cfg.topology_name}")
+    print(f"   📊 Load: {env_cfg.load} Erlangs")
+    print(f"   📏 Episode length: {env_cfg.episode_length} steps")
+    print(f"   🚀 Ambientes paralelos: {train_cfg.n_envs}")
+    print(f"   📡 Modulações: {env_cfg.modulations_to_consider}/6 ativas")
+    print(f"   📁 Diretório: {train_cfg.base_dir}")
+    print(f"   📝 Callbacks: BlockingRate, Fragmentation, RewardStats, StopAfterEpisodes")
+    print(f"\n   💡 INTENSIVE_V2_REFINED: LR linear 3e-4→0, Batch 1024, Epochs 10, clip_range_vf 0.2")
+    print(f"   ⏱️  Tempo estimado: ~25-35 horas com 44 envs")
+    print("="*80 + "\n")
     
     # Executa treinamento
     model, run_dir = train(env_cfg, train_cfg)

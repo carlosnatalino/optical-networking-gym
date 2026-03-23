@@ -2390,11 +2390,11 @@ cdef class QRMSAEnv:
         Reward function otimizada para PPO.
         
         Para serviços ACEITOS:
-            reward = 1.0 + 0.5×(SE/SE_max) - 0.3×frag_score - 0.15×osnr_waste
+            reward = 0.8 + 0.3×(SE/SE_max) - 0.3×frag_score - 0.3×osnr_waste
             
         Para BLOQUEIOS:
-            reject = -1.0 (ação consciente de rejeitar)
-            block_recursos = -1.5 (impossível alocar)
+            reject = -1.8 (ação consciente de rejeitar)
+            block_recursos = -2.0 (impossível alocar)
             block_osnr = -2.0 (qualidade insuficiente)
         
         NOTA: Não usa failed_ratio pois PPO já gerencia penalidades adaptativas
@@ -2403,7 +2403,7 @@ cdef class QRMSAEnv:
         cdef double reward_value
         cdef double modulation_bonus, fragmentation_penalty, osnr_waste_penalty
         cdef double current_se, max_se, se_normalized
-        cdef double osnr_margin, osnr_waste_normalized
+        cdef double mod_osnr_waste, osnr_waste_normalized
         cdef double frag_score
         
         # ====================================
@@ -2412,44 +2412,54 @@ cdef class QRMSAEnv:
         if not self.current_service.accepted:
             # Penalidades fixas e simples (PPO gerencia o resto)
             if self.current_service.blocked_due_to_resources:
-                return -1.8  # Bloqueio por falta de recursos
+                return -2.0  # Bloqueio por falta de recursos
             elif self.current_service.blocked_due_to_osnr:
-                return -1.8  # Bloqueio por OSNR (pior, pois indica má escolha de path/mod)
+                return -2.0  # Bloqueio por OSNR (pior, pois indica má escolha de path/mod)
             else:
-                return -2.0  # Reject explícito (ação válida, menor penalidade)
+                return -1.8  # Reject explícito (ação válida, menor penalidade)
         
-        reward_value = 1.0
+        # ====================================
+        # CASO 2: SERVIÇO ACEITO
+        # ====================================
+        reward_value = 0.8
 
+        # Bônus por eficiência espectral
         current_se = self.current_service.current_modulation.spectral_efficiency
         max_se = max([mod.spectral_efficiency for mod in self.modulations])
         se_normalized = current_se / max_se if max_se > 0 else 0.0
-        modulation_bonus = 0.5 * se_normalized
+        modulation_bonus = 0.3 * se_normalized
         
+        # Penalidade por fragmentação
         if info is not None:
             frag_score = self._compute_fragmentation_score_from_info(info)
         else:
             frag_score = 0.0 
         fragmentation_penalty = 0.3 * frag_score
 
+        # Penalidade por desperdício de OSNR (usar modulação inferior ao possível)
         if self.current_service.current_modulation != self.modulations[self.max_modulation_idx]:
-            osnr_margin = self.current_service.OSNR - self.current_service.current_modulation.minimum_osnr
-            osnr_waste_normalized = min(max(osnr_margin / 3.0, 0.0), 3.0)
-            osnr_waste_penalty = 0.20 * osnr_waste_normalized
+            mod_osnr_waste = self.current_service.OSNR - self.modulations[self.max_modulation_idx].minimum_osnr
+            # Normalizar para [0, 1]: valores positivos de mod_osnr_waste indicam desperdício
+            # Limitar a 3dB como referência (desperdício > 3dB = penalidade máxima)
+            osnr_waste_normalized = min(max(mod_osnr_waste / 3.0, 0.0), 1.0)
+            osnr_waste_penalty = 0.3 * osnr_waste_normalized
         else:
-            osnr_waste_penalty = 0.0  
+            mod_osnr_waste = 0.0
+            osnr_waste_penalty = 0.0
         
+        # Reward final
         reward_value = reward_value + modulation_bonus - fragmentation_penalty - osnr_waste_penalty
         
+        # Debug opcional
         if hasattr(self, 'debug_reward') and self.debug_reward:
             print(f"  💰 REWARD DEBUG (service {self.current_service.service_id}):")
-            print(f"     Base: +1.0")
+            print(f"     Base: +0.8")
             print(f"     Modulation ({self.current_service.current_modulation.name}, SE={current_se:.2f}): +{modulation_bonus:.3f}")
             print(f"     Fragmentation (score={frag_score:.3f}): -{fragmentation_penalty:.3f}")
-            print(f"     OSNR Waste (margin={osnr_margin:.2f}dB): -{osnr_waste_penalty:.3f}")
+            print(f"     OSNR Waste ({mod_osnr_waste:.2f}dB): -{osnr_waste_penalty:.3f}")
             print(f"     ➜ TOTAL: {reward_value:.3f}")
         
-        # Optional: Clipping suave para evitar valores extremos
-        # (PPO funciona melhor com rewards em range razoável)
+        # Clipping suave para evitar valores extremos (PPO funciona melhor com rewards bounded)
         if reward_value > 2.0:
             reward_value = 2.0
         elif reward_value < -2.0:
