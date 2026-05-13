@@ -1,41 +1,26 @@
-# Optical Networking Gym: an open-source toolkit for resource assignment problems in optical networks
+# JOCN 2024 Benchmark Reproduction
 
-## Citing the work
+Run these commands from this package directory with the repository Python environment.
 
-You can cite using the following bibtex:
-
-```bibtex
-@ARTICLE{Natalino_2024_gym,
-  author={Natalino, Carlos and Magalhaes, Talles and Arpanaei, Farhad and Lobato, Fabricio R. L. and Costa, Joao C. W. A. and Hernandez, Jose Alberto and Monti, Paolo},
-  journal={Journal of Optical Communications and Networking}, 
-  title={{Optical Networking Gym}: an open-source toolkit for resource assignment problems in optical networks}, 
-  year={2024},
-  volume={16},
-  number={12},
-  pages={G40-G51},
-  doi={10.1364/JOCN.532850},
-}
+```powershell
+..\.venv\Scripts\python.exe examples\JOCN_Benchmark_2024\graph_load.py --topology-id nobel-eu --workers 1
+..\.venv\Scripts\python.exe examples\JOCN_Benchmark_2024\graph_margin.py --topology-id nobel-eu --load 210 --workers 1
+..\.venv\Scripts\python.exe examples\JOCN_Benchmark_2024\graph_launch_power.py --topology-id nobel-eu --load 210 --workers 1
 ```
 
-## Reproducing the results
+For a quick local smoke run:
 
-### Launch power optimization
-
-To reproduce the results from Sec. 4.A of the paper, use the following command.
-Make sure to fine tune the number of threads (the `th` parameter) to a reasonable value depending on the computer you are running it in.
-
-```bash
-python examples/JOCN_Benchmark_2024/graph_launch_power.py -t nobel-eu.xml -e 1000 -s 1000 -l 210 -th 1
+```powershell
+..\.venv\Scripts\python.exe examples\JOCN_Benchmark_2024\graph_load.py --topology-id ring_4 --loads 10 --episodes-per-point 1 --request-count 8 --workers 1
 ```
 
-### Benchmarking QoT-Aware Dynamic RMSA Algorithms
+Each script writes a standard run directory under:
 
-```bash
-python examples/JOCN_Benchmark_2024/graph_load.py -t nobel-eu.xml -e 1000 -s 1000 -th 1
+```text
+examples/results/JOCN_Benchmark_2024/<script-name>/<YYYYMMDD-HHMMSS>/
+  metadata.json
+  episodes.csv
+  summary.csv
 ```
 
-### Impact of margin
-
-```bash
-python examples/JOCN_Benchmark_2024/graph_margin.py -t nobel-eu.xml -e 1000 -s 1000 -l 210 -th 1
-```
+`plots.ipynb` reads those CSV files and generates the load, margin, and launch-power plots locally.

@@ -1,78 +1,37 @@
-import os
-from setuptools import setup, Extension
+from __future__ import annotations
 
-import numpy as np
 from Cython.Build import cythonize
+import numpy
+from setuptools import Extension, setup
 
 
-def get_env_or_default(key, default):
-    return os.environ.get(key, default)
+extensions = [
+    Extension(
+        "optical_networking_gym_v2.optical.kernels.allocation_kernel",
+        ["src/optical_networking_gym_v2/optical/kernels/allocation_kernel.pyx"],
+        include_dirs=[numpy.get_include()],
+    ),
+    Extension(
+        "optical_networking_gym_v2.optical.kernels.qot_kernel",
+        ["src/optical_networking_gym_v2/optical/kernels/qot_kernel.pyx"],
+        include_dirs=[numpy.get_include()],
+    ),
+    Extension(
+        "optical_networking_gym_v2.simulation._request_analysis_kernels",
+        ["src/optical_networking_gym_v2/simulation/_request_analysis_kernels.pyx"],
+        include_dirs=[numpy.get_include()],
+    ),
+]
 
-
-DEBUG = get_env_or_default("DEBUG", "0") == "1"
-
-compiler_directives = {"language_level": "3"}
-define_macros = [("NPY_NO_DEPRECATED_API", "NPY_1_7_API_VERSION")]
-extra_compile_args = []
-extra_link_args = []
-
-if DEBUG:
-    define_macros.append(("CYTHON_TRACE_NOGIL", "1"))
-else:
-    extra_compile_args = ["-O3", "-march=native", "-ffast-math"]
-    extra_link_args = ["-O3"]
-    compiler_directives["boundscheck"] = False
-    compiler_directives["wraparound"] = False
-    compiler_directives["nonecheck"] = False
-    compiler_directives["cdivision"] = True
 
 setup(
-    name="optical_networking_gym",
-    # install_requires=["gymnasium", "numpy", "matplotlib", "networkx"],
     ext_modules=cythonize(
-        [
-            Extension(
-                "optical_networking_gym.utils",
-                ["optical_networking_gym/utils.pyx"],
-                include_dirs=[np.get_include()],
-                define_macros=define_macros,
-                extra_compile_args=extra_compile_args,
-                extra_link_args=extra_link_args,
-            ),
-            Extension(
-                "optical_networking_gym.core.osnr",
-                ["optical_networking_gym/core/osnr.pyx"],
-                include_dirs=[np.get_include()],
-                define_macros=define_macros,
-                extra_compile_args=extra_compile_args,
-                extra_link_args=extra_link_args,
-            ),
-            Extension(
-                "optical_networking_gym.topology",
-                ["optical_networking_gym/topology.pyx"],
-                include_dirs=[np.get_include()],
-                define_macros=define_macros,
-                extra_compile_args=extra_compile_args,
-                extra_link_args=extra_link_args,
-            ),
-            Extension(
-                "optical_networking_gym.envs.rmsa",
-                ["optical_networking_gym/envs/rmsa.pyx"],
-                include_dirs=[np.get_include()],
-                define_macros=define_macros,
-                extra_compile_args=extra_compile_args,
-                extra_link_args=extra_link_args,
-            ),
-            Extension(
-                "optical_networking_gym.envs.qrmsa",
-                ["optical_networking_gym/envs/qrmsa.pyx"],
-                include_dirs=[np.get_include()],
-                define_macros=define_macros,
-                extra_compile_args=extra_compile_args,
-                extra_link_args=extra_link_args,
-            ),
-        ],
-        compiler_directives=compiler_directives,
-    ),
-    include_dirs=[np.get_include()],
+        extensions,
+        compiler_directives={
+            "language_level": "3",
+            "boundscheck": False,
+            "wraparound": False,
+            "initializedcheck": False,
+        },
+    )
 )

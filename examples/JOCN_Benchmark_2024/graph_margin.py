@@ -1,186 +1,130 @@
-import argparse
-import logging
-import os
-import random
-from typing import List, Tuple, Optional
-from multiprocessing import Pool 
+from __future__ import annotations
 
-import numpy as np
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 
-from optical_networking_gym.wrappers.qrmsa_gym import run_wrapper
-from optical_networking_gym.topology import Modulation, get_topology
-from optical_networking_gym.envs.qrmsa import Service  # Import Service class
+from optical_networking_gym_v2 import build_scenario
+from optical_networking_gym_v2.utils.experiment_utils import SimulationUtils
+from optical_networking_gym_v2.utils.experiment_utils import build_standard_sweep_parser, run_first_fit_sweep
+from optical_networking_gym_v2.utils.sweep_reporting import Parallelism
 
-# Configure logging
-logging.getLogger("rmsaenv").setLevel(logging.INFO)
-np.set_printoptions(linewidth=np.inf)
 
-# Initial configurations
-seed = 20
-random.seed(seed)
+SCRIPT_DIR = Path(__file__).resolve().parent
+FAMILY = "JOCN_Benchmark_2024"
+DEFAULT_MARGINS = (0.0, 2.0, 0.5)
+DEFAULT_OUTPUT_DIR = SCRIPT_DIR / "results"
 
-# Monkey-patch the Service class to support ordering (fixes heapq TypeError)
-# def service_lt(self, other):
-#     return self.time < other.time  # Replace 'time' with the appropriate attribute
 
-# Service.__lt__ = service_lt  # Add the __lt__ method to the Service class
-
-def parse_arguments() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description='Optical Network Simulation')
-
-    parser.add_argument(
-        '-t', '--topology_file',
-        type=str,
-        default='nsfnet_chen.txt',
-        help='Network topology file to be used (default: nsfnet_chen.txt)'
+def create_env(
+    margin: float,
+    *,
+    topology_id: str = "nobel-eu",
+    load: float = 210.0,
+    episode_length: int = 1_000,
+    measure_disruptions: bool = True,
+    drop_on_disruption: bool = False,
+):
+    return build_scenario(
+        "jocn_benchmark",
+        scenario_id=f"jocn_benchmark_{topology_id}_margin_{margin:g}",
+        topology_id=topology_id,
+        load=load,
+        episode_length=episode_length,
+        margin=float(margin),
+        measure_disruptions=measure_disruptions,
+        drop_on_disruption=drop_on_disruption,
     )
 
-    parser.add_argument(
-        '-e', '--num_episodes',
-        type=int,
-        default=1,
-        help='Number of episodes to be simulated (default: 1)'
+
+@dataclass(frozen=True, slots=True)
+class MarginSweepExperiment:
+    topology_id: str = "nobel-eu"
+    load: float = 210.0
+    margins: float | tuple[float, ...] = DEFAULT_MARGINS
+    episodes_per_point: int = 10
+    episode_length: int = 1_000
+    policy_name: str = "first_fit"
+    measure_disruptions: bool = True
+    drop_on_disruption: bool = False
+    capture_services: bool = False
+    output_dir: Path = DEFAULT_OUTPUT_DIR
+    parallelism: Parallelism = Parallelism.auto()
+    progress: bool = True
+    progress_interval: int = 100
+
+    def scenarios_by_value(self):
+        scenarios = []
+        for margin in SimulationUtils.normalize_values(self.margins):
+            scenario = create_env(
+                margin=margin,
+                topology_id=self.topology_id,
+                load=self.load,
+                episode_length=self.episode_length,
+                measure_disruptions=self.measure_disruptions,
+                drop_on_disruption=self.drop_on_disruption,
+            )
+            scenarios.append((margin, scenario))
+        return tuple(scenarios)
+
+
+def run_sweep(experiment: MarginSweepExperiment | None = None, *, now: datetime | None = None):
+    resolved = MarginSweepExperiment() if experiment is None else experiment
+    return run_first_fit_sweep(
+        script_path=SCRIPT_DIR / "graph_margin.py",
+        family=FAMILY,
+        sweep_name="margin",
+        scenarios_by_value=resolved.scenarios_by_value(),
+        output_dir=resolved.output_dir,
+        parallelism=resolved.parallelism,
+        episodes_per_point=resolved.episodes_per_point,
+        policy_name=resolved.policy_name,
+        now=now,
+        progress=resolved.progress,
+        progress_interval=resolved.progress_interval,
+        capture_services=resolved.capture_services,
     )
 
-    parser.add_argument(
-        '-l', '--load',
-        type=int,
-        default=210,
-        help='Load to be used in the simulation (default: 210)'
-    )
 
-    parser.add_argument(
-        '-s', '--episode_length',
-        type=int,
-        default=1000,
-        help='Number of arrivals per episode to be generated (default: 1000)'
+def build_parser():
+    parser = build_standard_sweep_parser(
+        description="JOCN 2024 margin sweep.",
+        default_output_dir=DEFAULT_OUTPUT_DIR,
     )
+    parser.add_argument("--topology-id", default="nobel-eu")
+    parser.add_argument("--load", type=float, default=210.0)
+    parser.add_argument("--request-count", type=int, default=1_000)
+    parser.add_argument("--margins", type=float, nargs="*", default=None)
+    parser.add_argument("--no-measure-disruptions", dest="measure_disruptions", action="store_false")
+    parser.add_argument("--drop-on-disruption", action="store_true", default=False)
+    parser.set_defaults(measure_disruptions=True)
+    return parser
 
-    parser.add_argument(
-        '-th', '--threads',
-        type=int,
-        default=1,
-        help='Number of threads to be used to run the simulations (default: 1)'
-    )
-
-    return parser.parse_args()
-
-def define_modulations() -> Tuple[Modulation, ...]:
-    return (
-        Modulation(
-            name="BPSK",
-            maximum_length=100_000,  # 100,000 km to ensure safety
-            spectral_efficiency=1,
-            minimum_osnr=12.6,
-            inband_xt=-14,
-        ),
-        Modulation(
-            name="QPSK",
-            maximum_length=2_000,
-            spectral_efficiency=2,
-            minimum_osnr=12.6,
-            inband_xt=-17,
-        ),
-        Modulation(
-            name="8QAM",
-            maximum_length=1_000,
-            spectral_efficiency=3,
-            minimum_osnr=18.6,
-            inband_xt=-20,
-        ),
-        Modulation(
-            name="16QAM",
-            maximum_length=500,
-            spectral_efficiency=4,
-            minimum_osnr=22.4,
-            inband_xt=-23,
-        ),
-        Modulation(
-            name="32QAM",
-            maximum_length=250,
-            spectral_efficiency=5,
-            minimum_osnr=26.4,
-            inband_xt=-26,
-        ),
-        Modulation(
-            name="64QAM",
-            maximum_length=125,
-            spectral_efficiency=6,
-            minimum_osnr=30.4,
-            inband_xt=-29,
-        ),
-    )
 
 def main() -> None:
-    args = parse_arguments()
-
-    # Assign arguments to variables
-    topology_name = args.topology_file
-    n_eval_episodes = args.num_episodes
-    load = args.load
-    episode_length = args.episode_length
-    threads = args.threads
-
-    launch_power = -4.0
-
-    # Define modulation formats
-    cur_modulations = define_modulations()
-
-    # Load topology using get_topology
-    topology = get_topology(
-        os.path.join("examples", "topologies", topology_name),
-        None,                # Name of the topology, adjust if necessary
-        cur_modulations,         # Tuple of modulation formats
-        80,                      # Maximum span length in km
-        0.2,                     # Default attenuation in dB/km
-        4.5,                     # Default noise figure in dB
-        5                        # Number of shortest paths to compute between node pairs
-    )
-
-    # Simulation parameters
-    bandwidth = 4e12
-    frequency_start = 3e8 / 1565e-9
-    frequency_end = frequency_start + bandwidth
-    frequency_slot_bandwidth = 12.5e9
-    bit_rates = (10, 40, 100, 400)
-    margins = np.arange(0, 2.1, 0.5)
-
-    strategy = 1
-
-    env_args = []
-    for margin in margins:
-        env_args.append(
-            (
-                n_eval_episodes,
-                strategy,
-                f"examples/JOCN_Benchmark_2024/results/mr_episodes_{strategy}_{margin}",
-                topology,
-                10,
-                True,
-                load,
-                episode_length,
-                320,
-                launch_power,
-                bandwidth,
-                frequency_start,
-                frequency_slot_bandwidth,
-                "discrete",
-                bit_rates,
-                margin,
-                f"examples/JOCN_Benchmark_2024/results/mr_services_{strategy}_{margin}",
-                False,
-            )
+    args = build_parser().parse_args()
+    margins = DEFAULT_MARGINS if args.margins is None else tuple(args.margins)
+    outputs = run_sweep(
+        MarginSweepExperiment(
+            topology_id=args.topology_id,
+            load=args.load,
+            margins=margins,
+            episodes_per_point=args.episodes_per_point,
+            episode_length=args.request_count,
+            output_dir=args.output_dir,
+            parallelism=Parallelism(workers=args.workers),
+            progress=args.progress,
+            progress_interval=args.progress_interval,
+            capture_services=args.capture_services,
+            measure_disruptions=args.measure_disruptions,
+            drop_on_disruption=args.drop_on_disruption,
         )
+    )
+    print(f"JOCN margin sweep episodes saved to: {outputs.episodes_csv}")
+    print(f"JOCN margin sweep summary saved to: {outputs.summary_csv}")
+    if outputs.services_csv is not None:
+        print(f"JOCN margin sweep services saved to: {outputs.services_csv}")
 
-    # Execute simulations with or without multiprocessing based on thread count
-    if threads > 1:
-        with Pool(processes=threads) as pool:
-            results = pool.map(run_wrapper, env_args)
-    else:
-        results = [run_wrapper(arg) for arg in env_args]
-
-    # Print results
-    print(results)
 
 if __name__ == "__main__":
     main()

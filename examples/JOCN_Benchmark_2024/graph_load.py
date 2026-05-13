@@ -1,222 +1,126 @@
-import argparse
-import logging
-import os
-import random
-from typing import List, Tuple
-from multiprocessing import Pool 
+from __future__ import annotations
 
-import numpy as np
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 
-from optical_networking_gym.wrappers.qrmsa_gym import run_wrapper
-from optical_networking_gym.topology import Modulation, get_topology
-from optical_networking_gym.envs.qrmsa import Service  # Import Service class
+from optical_networking_gym_v2 import build_scenario
+from optical_networking_gym_v2.utils.experiment_utils import SimulationUtils
+from optical_networking_gym_v2.utils.experiment_utils import build_standard_sweep_parser, run_first_fit_sweep
+from optical_networking_gym_v2.utils.sweep_reporting import Parallelism
 
-# Configure logging
-logging.getLogger("rmsaenv").setLevel(logging.INFO)
-np.set_printoptions(linewidth=np.inf)
 
-# Initial configurations
-seed = 20
-random.seed(seed)
+SCRIPT_DIR = Path(__file__).resolve().parent
+FAMILY = "JOCN_Benchmark_2024"
+DEFAULT_LOAD = (50.0, 650.0, 50.0)
+DEFAULT_OUTPUT_DIR = SCRIPT_DIR / "results"
+LEGACY_POLICIES = ("KSP-FF-BM", "LS-BM-KSP", "BM-KSP-LB", "KSP-LB-BM")
 
-# # Monkey-patch the Service class to support ordering
-# def service_lt(self, other):
-#     return self.time < other.time  # Replace 'time' with the appropriate attribute
 
-# Service.__lt__ = service_lt  # Add the __lt__ method to the Service class
+def default_loads_for_topology(topology_id: str) -> tuple[float, float, float]:
+    if topology_id == "nobel-eu":
+        return (50.0, 650.0, 50.0)
+    if topology_id == "germany50":
+        return (300.0, 800.0, 50.0)
+    if topology_id == "janos-us":
+        return (100.0, 600.0, 50.0)
+    if topology_id == "nsfnet_chen":
+        return (100.0, 600.0, 50.0)
+    raise ValueError(f"unknown topology id: {topology_id}")
 
-def parse_arguments() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description='Optical Network Simulation')
 
-    parser.add_argument(
-        '-t', '--topology_file',
-        type=str,
-        default='nsfnet_chen.txt',
-        help='Network topology file to be used (default: nsfnet_chen.txt)'
+def create_env(
+    load: float | tuple[float, ...] = DEFAULT_LOAD,
+    *,
+    topology_id: str = "nobel-eu",
+    episode_length: int = 1_000,
+):
+    return tuple(
+        build_scenario(
+            "jocn_benchmark",
+            scenario_id=f"jocn_benchmark_{topology_id}_load_{current_load:g}",
+            topology_id=topology_id,
+            episode_length=episode_length,
+            load=float(current_load),
+        )
+        for current_load in SimulationUtils.normalize_values(load)
     )
 
-    parser.add_argument(
-        '-e', '--num_episodes',
-        type=int,
-        default=1,
-        help='Number of episodes to be simulated (default: 1)'
+
+@dataclass(frozen=True, slots=True)
+class LoadSweepExperiment:
+    topology_id: str = "nobel-eu"
+    loads: float | tuple[float, ...] = DEFAULT_LOAD
+    episodes_per_point: int = 10
+    episode_length: int = 1_000
+    policy_names: tuple[str, ...] = LEGACY_POLICIES
+    capture_services: bool = False
+    output_dir: Path = DEFAULT_OUTPUT_DIR
+    parallelism: Parallelism = Parallelism.auto()
+    progress: bool = True
+    progress_interval: int = 100
+
+    def scenarios_by_value(self):
+        scenarios = create_env(
+            load=self.loads,
+            topology_id=self.topology_id,
+            episode_length=self.episode_length,
+        )
+        return tuple((scenario.load, scenario) for scenario in scenarios)
+
+
+def run_sweep(experiment: LoadSweepExperiment | None = None, *, now: datetime | None = None):
+    resolved = LoadSweepExperiment() if experiment is None else experiment
+    return run_first_fit_sweep(
+        script_path=SCRIPT_DIR / "graph_load.py",
+        family=FAMILY,
+        sweep_name="load",
+        scenarios_by_value=resolved.scenarios_by_value(),
+        output_dir=resolved.output_dir,
+        parallelism=resolved.parallelism,
+        episodes_per_point=resolved.episodes_per_point,
+        policy_name=resolved.policy_names,
+        now=now,
+        progress=resolved.progress,
+        progress_interval=resolved.progress_interval,
+        capture_services=resolved.capture_services,
     )
 
-    parser.add_argument(
-        '-s', '--episode_length',
-        type=int,
-        default=1000,
-        help='Number of arrivals per episode to be generated (default: 1000)'
+
+def build_parser():
+    parser = build_standard_sweep_parser(
+        description="JOCN 2024 load sweep.",
+        default_output_dir=DEFAULT_OUTPUT_DIR,
     )
+    parser.add_argument("--topology-id", default="nobel-eu")
+    parser.add_argument("--request-count", type=int, default=1_000)
+    parser.add_argument("--loads", type=float, nargs="*", default=None)
+    parser.add_argument("--policies", nargs="*", default=None)
+    return parser
 
-    parser.add_argument(
-        '-th', '--threads',
-        type=int,
-        default=2,
-        help='Number of threads to be used to run the simulations (default: 2)'
-    )
-
-    return parser.parse_args()
-
-def define_modulations() -> Tuple[Modulation, ...]:
-    return (
-        Modulation(
-            name="BPSK",
-            maximum_length=100_000,  # 100,000 km to ensure safety
-            spectral_efficiency=1,
-            minimum_osnr=12.6,
-            inband_xt=-14,
-        ),
-        Modulation(
-            name="QPSK",
-            maximum_length=2_000,
-            spectral_efficiency=2,
-            minimum_osnr=12.6,
-            inband_xt=-17,
-        ),
-        Modulation(
-            name="8QAM",
-            maximum_length=1_000,
-            spectral_efficiency=3,
-            minimum_osnr=18.6,
-            inband_xt=-20,
-        ),
-        Modulation(
-            name="16QAM",
-            maximum_length=500,
-            spectral_efficiency=4,
-            minimum_osnr=22.4,
-            inband_xt=-23,
-        ),
-        Modulation(
-            name="32QAM",
-            maximum_length=250,
-            spectral_efficiency=5,
-            minimum_osnr=26.4,
-            inband_xt=-26,
-        ),
-        Modulation(
-            name="64QAM",
-            maximum_length=125,
-            spectral_efficiency=6,
-            minimum_osnr=30.4,
-            inband_xt=-29,
-        ),
-    )
-
-def get_loads(topology_name: str) -> np.ndarray:
-    if topology_name == "nobel-eu.xml":
-        return np.arange(50, 651, 50)
-    elif topology_name == "germany50.xml":
-        return np.arange(300, 801, 50)
-    elif topology_name == "janos-us.xml":
-        return np.arange(100, 601, 50)
-    elif topology_name == "nsfnet_chen.txt":
-        return np.arange(100, 601, 50)
-    else:
-        raise ValueError(f"Unknown topology name: {topology_name}")
-
-def prepare_env_args(
-    n_eval_episodes: int,
-    topology: object,
-    episode_length: int,
-    launch_power: float,
-    bandwidth: float,
-    frequency_start: float,
-    frequency_slot_bandwidth: float,
-    bit_rates: tuple[int, ...],
-    margin: int,
-    loads: np.ndarray,
-    strategies: List[int]
-) -> List[Tuple]:
-    env_args = []
-    for current_load in loads:
-        for strategy in strategies:
-            sim_args = (
-                n_eval_episodes,
-                strategy,
-                f"examples/JOCN_Benchmark_2024/results/load_episodes_{strategy}",
-                topology,
-                10,
-                True,
-                current_load,
-                episode_length,
-                320,
-                launch_power,
-                bandwidth,
-                frequency_start,
-                frequency_slot_bandwidth,
-                "discrete",
-                bit_rates,
-                margin,
-                f"examples/JOCN_Benchmark_2024/results/load_services_{strategy}",
-                False,
-            )
-            env_args.append(sim_args)
-    return env_args
 
 def main() -> None:
-    args = parse_arguments()
-
-    # Assign arguments to variables
-    topology_name = args.topology_file
-    n_eval_episodes = args.num_episodes
-    episode_length = args.episode_length
-    threads = args.threads
-
-    launch_power = -4.0
-
-    # Define load ranges based on topology
-    loads = get_loads(topology_name)
-
-    # Define modulation formats
-    cur_modulations = define_modulations()
-
-    # Load topology
-    topology = get_topology(
-        os.path.join("examples", "topologies", topology_name),
-        None,                # Name of the topology, adjust if necessary
-        cur_modulations,         # Tuple of modulation formats
-        80,                      # Maximum span length in km
-        0.2,                     # Default attenuation in dB/km
-        4.5,                     # Default noise figure in dB
-        5                        # Number of shortest paths to compute between node pairs
+    args = build_parser().parse_args()
+    loads = default_loads_for_topology(args.topology_id) if args.loads is None else tuple(args.loads)
+    outputs = run_sweep(
+        LoadSweepExperiment(
+            topology_id=args.topology_id,
+            loads=loads,
+            episodes_per_point=args.episodes_per_point,
+            episode_length=args.request_count,
+            output_dir=args.output_dir,
+            parallelism=Parallelism(workers=args.workers),
+            progress=args.progress,
+            progress_interval=args.progress_interval,
+            capture_services=args.capture_services,
+            policy_names=LEGACY_POLICIES if args.policies is None else tuple(args.policies),
+        )
     )
+    print(f"JOCN load sweep episodes saved to: {outputs.episodes_csv}")
+    print(f"JOCN load sweep summary saved to: {outputs.summary_csv}")
+    if outputs.services_csv is not None:
+        print(f"JOCN load sweep services saved to: {outputs.services_csv}")
 
-    bandwidth = 4e12
-    frequency_start = 3e8 / 1565e-9
-    frequency_end = frequency_start + bandwidth
-    frequency_slot_bandwidth = 12.5e9
-    bit_rates = (10, 40, 100, 400)
-    margin = 0
-
-    # Define strategies
-    strategies = list(range(1, 5))
-
-    # Prepare environment arguments
-    env_args = prepare_env_args(
-        n_eval_episodes,
-        topology,
-        episode_length,
-        launch_power,
-        bandwidth,
-        frequency_start,
-        frequency_slot_bandwidth,
-        bit_rates,
-        margin,
-        loads,
-        strategies
-    )
-
-    # Execute simulations with or without multiprocessing based on thread count
-    if threads > 1:
-        with Pool(processes=threads) as pool:
-            results = pool.map(run_wrapper, env_args)
-    else:
-        results = [run_wrapper(arg) for arg in env_args]
-
-    # Print results
-    print(results)
 
 if __name__ == "__main__":
     main()
