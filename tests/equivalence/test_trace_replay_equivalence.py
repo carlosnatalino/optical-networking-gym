@@ -18,8 +18,8 @@ from optical_networking_gym_v2.network.topology import TopologyModel
 from optical_networking_gym_v2.simulation.scenario import ScenarioConfig
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-TOPOLOGY_DIR = PROJECT_ROOT / "examples" / "topologies"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+TOPOLOGY_DIR = PROJECT_ROOT / "src" / "optical_networking_gym_v2" / "topologies"
 RING6_PATH = TOPOLOGY_DIR / "ring6.txt"
 
 

@@ -2,6 +2,16 @@ from __future__ import annotations
 
 from importlib import import_module
 
+import pytest
+
+try:
+    import optical_networking_gym.envs.qrmsa as _legacy_qrmsa
+except ModuleNotFoundError:  # pragma: no cover - depends on optional legacy package
+    pytest.skip(
+        "Legacy optical_networking_gym is required for integrated benchmarking",
+        allow_module_level=True,
+    )
+
 from optical_networking_gym_v2.bench import (
     benchmark_integrated_episode_vs_legacy,
     profile_simulator_episode,

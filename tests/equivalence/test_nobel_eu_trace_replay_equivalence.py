@@ -18,8 +18,8 @@ from optical_networking_gym_v2.network.topology import TopologyModel
 from optical_networking_gym_v2.utils import build_nobel_eu_ofc_v1_scenario
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-TOPOLOGY_DIR = PROJECT_ROOT / "examples" / "topologies"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+TOPOLOGY_DIR = PROJECT_ROOT / "src" / "optical_networking_gym_v2" / "topologies"
 NOBEL_EU_PATH = TOPOLOGY_DIR / "nobel-eu.xml"
 REQUEST_COUNT = 250
 SEED = 10

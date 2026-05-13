@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
@@ -17,8 +17,8 @@ from optical_networking_gym_v2 import (
 )
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-RING_4_PATH = PROJECT_ROOT / "optical_networking_gym_v2" / "src" / "optical_networking_gym_v2" / "topologies" / "ring_4.txt"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+RING_4_PATH = PROJECT_ROOT / "src" / "optical_networking_gym_v2" / "topologies" / "ring_4.txt"
 
 
 def _topology() -> TopologyModel:

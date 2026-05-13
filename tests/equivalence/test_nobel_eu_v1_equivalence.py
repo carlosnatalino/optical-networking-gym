@@ -17,8 +17,8 @@ from optical_networking_gym_v2.utils import build_nobel_eu_ofc_v1_scenario
 from .helpers import build_legacy_action_mask, build_legacy_service
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-NOBEL_EU_PATH = PROJECT_ROOT / "examples" / "topologies" / "nobel-eu.xml"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+NOBEL_EU_PATH = PROJECT_ROOT / "src" / "optical_networking_gym_v2" / "topologies" / "nobel-eu.xml"
 
 
 def _legacy_modulations() -> tuple[LegacyModulation, ...]:

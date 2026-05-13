@@ -1,17 +1,24 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 
 import numpy as np
+import pytest
 
-import optical_networking_gym.core.osnr as legacy_osnr
-from optical_networking_gym.envs.qrmsa import QRMSAEnv, Service
-from optical_networking_gym.topology import Modulation, get_topology
+try:
+    import optical_networking_gym.core.osnr as legacy_osnr
+    from optical_networking_gym.envs.qrmsa import QRMSAEnv, Service
+    from optical_networking_gym.topology import Modulation, get_topology
+except ModuleNotFoundError:  # pragma: no cover - depends on optional legacy package
+    pytest.skip(
+        "Legacy optical_networking_gym is required for equivalence tests",
+        allow_module_level=True,
+    )
 from optical_networking_gym_v2 import Modulation as V2Modulation, ScenarioConfig, ServiceRequest, TopologyModel
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-RING_4_PATH = PROJECT_ROOT / "optical_networking_gym_v2" / "src" / "optical_networking_gym_v2" / "topologies" / "ring_4.txt"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+RING_4_PATH = PROJECT_ROOT / "src" / "optical_networking_gym_v2" / "topologies" / "ring_4.txt"
 
 
 def build_ring4_topology_v2(

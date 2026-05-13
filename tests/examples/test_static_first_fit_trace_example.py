@@ -6,7 +6,7 @@ from pathlib import Path
 from optical_networking_gym_v2 import TrafficRecord, TrafficTable, write_traffic_table_jsonl
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE_PATH = PROJECT_ROOT / "optical_networking_gym_v2" / "examples" / "static_first_fit_trace.py"
 
 

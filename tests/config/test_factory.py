@@ -5,8 +5,8 @@ from pathlib import Path
 from optical_networking_gym_v2 import OpticalEnv, ScenarioConfig, get_modulations, make_env
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-TOPOLOGY_DIR = PROJECT_ROOT / "examples" / "topologies"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+TOPOLOGY_DIR = PROJECT_ROOT / "src" / "optical_networking_gym_v2" / "topologies"
 
 
 def test_make_env_builds_optical_env_with_dynamic_defaults() -> None:

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import heapq
 
@@ -26,8 +26,8 @@ from .helpers import (
 def _topology() -> TopologyModel:
     from pathlib import Path
 
-    project_root = Path(__file__).resolve().parents[3]
-    ring_4_path = project_root / "examples" / "topologies" / "ring_4.txt"
+    project_root = Path(__file__).resolve().parents[2]
+    ring_4_path = PROJECT_ROOT / "src" / "optical_networking_gym_v2" / "topologies" / "ring_4.txt"
     return TopologyModel.from_file(ring_4_path, topology_id="ring_4", k_paths=2)
 
 
