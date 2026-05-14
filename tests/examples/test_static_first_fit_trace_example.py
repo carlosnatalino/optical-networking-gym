@@ -7,7 +7,7 @@ from optical_networking_gym_v2 import TrafficRecord, TrafficTable, write_traffic
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-EXAMPLE_PATH = PROJECT_ROOT / "optical_networking_gym_v2" / "examples" / "static_first_fit_trace.py"
+EXAMPLE_PATH = PROJECT_ROOT / "examples" / "static_first_fit_trace.py"
 
 
 def _load_module():

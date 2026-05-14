@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 import statistics
 import time
 
@@ -11,6 +10,7 @@ from optical_networking_gym_v2.contracts.modulation import Modulation
 from optical_networking_gym_v2.contracts.reward import CandidateRewardMetrics, RewardInput
 from optical_networking_gym_v2.contracts.step import StepTransition
 from optical_networking_gym_v2.contracts.traffic import ServiceRequest
+from optical_networking_gym_v2.defaults import resolve_topology
 from optical_networking_gym_v2.runtime.runtime_state import RuntimeState
 from optical_networking_gym_v2.runtime.step_info import StepInfo
 from optical_networking_gym_v2.network.allocation import (
@@ -28,8 +28,7 @@ from optical_networking_gym_v2.config.scenario import ScenarioConfig
 from optical_networking_gym_v2.stats.statistics import Statistics
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
-RING_4_PATH = PROJECT_ROOT / "examples" / "topologies" / "ring_4.txt"
+RING_4_PATH = resolve_topology("ring_4")
 
 
 def _durations_summary_us(durations_ns: list[int]) -> tuple[float, float]:

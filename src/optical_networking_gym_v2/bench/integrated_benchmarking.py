@@ -20,14 +20,14 @@ from optical_networking_gym.topology import Modulation as LegacyModulation, get_
 from optical_networking_gym_v2.contracts.enums import TrafficMode
 from optical_networking_gym_v2.contracts.modulation import Modulation
 from optical_networking_gym_v2.contracts.traffic import TrafficRecord, TrafficTable
+from optical_networking_gym_v2.defaults import BUILTIN_TOPOLOGY_DIR, resolve_topology
 from optical_networking_gym_v2.network.topology import TopologyModel
 from optical_networking_gym_v2.config.scenario import ScenarioConfig
 from optical_networking_gym_v2.runtime.simulator import Simulator
 from optical_networking_gym_v2.runtime.traffic_model import TrafficModel
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
-TOPOLOGY_DIR = PROJECT_ROOT / "examples" / "topologies"
+TOPOLOGY_DIR = BUILTIN_TOPOLOGY_DIR
 
 
 def _durations_summary_us(durations_ns: list[int]) -> tuple[float, float]:
@@ -48,11 +48,7 @@ def _suppress_legacy_output(enabled: bool = True):
 
 
 def _topology_path(topology_id: str) -> Path:
-    for suffix in (".txt", ".xml"):
-        candidate = TOPOLOGY_DIR / f"{topology_id}{suffix}"
-        if candidate.exists():
-            return candidate
-    raise FileNotFoundError(f"could not resolve topology file for {topology_id!r}")
+    return resolve_topology(topology_id)
 
 
 def _v2_modulations() -> tuple[Modulation, ...]:
