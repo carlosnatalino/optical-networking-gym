@@ -1,9 +1,13 @@
 __pycache__/
 *.py[cod]
+*.so
+*.c
+*.DS_Store
 
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.coverage
 
 build/
 dist/
