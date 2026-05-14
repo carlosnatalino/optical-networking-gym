@@ -3,11 +3,10 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-from optical_networking_gym_v2 import make_env, select_first_fit_action, set_topology_dir
+from optical_networking_gym_v2 import BUILTIN_TOPOLOGY_DIR, make_env, select_first_fit_action, set_topology_dir
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-TOPOLOGY_DIR = REPO_ROOT / "examples" / "topologies"
+TOPOLOGY_DIR = BUILTIN_TOPOLOGY_DIR
 RESULTS_DIR = Path(__file__).resolve().parents[1] / "results"
 
 

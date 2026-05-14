@@ -1,108 +1,78 @@
-# optical_networking_gym_v2
+# Optical Networking Gym
+An Open-Source Toolkit for Benchmarking Resource Assignment Problems in Optical Networks
 
-`optical_networking_gym_v2` is the isolated rewrite of the optical networking
-environment. The goal is to keep the `v2` runtime independent from the legacy
-implementation while making the hot path easier to benchmark, profile, and move
-to Cython.
+## Installation
 
-## Scope
+We recommend installing an environment using Python's *venv* module:
 
-- `src/optical_networking_gym_v2`: runtime, contracts, RL helpers, topology,
-  QoT, simulation, and Cython kernels
-- `tests/`: coverage for contracts, equivalence, simulator behavior, examples,
-  and performance harnesses
-- `benchmarks/`: focused scripts and comparison artifacts for hot-path analysis
-- `examples/`: runnable scripts for smoke tests, traces, and visual inspection
-
-This subproject should not use the legacy runtime as an implementation layer.
-
-## Quick Start
-
-From the outer workspace root:
-
-```powershell
-.\.venv\Scripts\python.exe optical_networking_gym_v2\setup.py build_ext --inplace
-.\.venv\Scripts\python.exe -m pytest optical_networking_gym_v2\tests -q
+```bash
+python -m venv .venv
 ```
 
-Create an environment with the canonical preset API:
+Then activating it:
 
-```python
-from optical_networking_gym_v2 import make_env
-
-env = make_env(scenario="ring4_quickstart")
-env = make_env(scenario="nobel_eu_baseline", load=400, margin=2.0)
-env = make_env(scenario="nobel_eu_baseline", modulations="BPSK,QPSK,16QAM")
+```bash
+source .venv/bin/activate
 ```
 
-Use `ScenarioConfig` directly only for advanced custom scenarios. Examples write
-standard run folders under `examples/results/<family>/<script-stem>/<timestamp>/`
-with `metadata.json`, `episodes.csv`, and `summary.csv` when applicable.
+Then, install the project:
 
-From inside `optical_networking_gym_v2`:
-
-```powershell
-..\.venv\Scripts\python.exe setup.py build_ext --inplace
-..\.venv\Scripts\python.exe -m pytest tests -q
+```bash
+pip install -e .
 ```
 
-If a `.pyx` file changes and imports look stale, force a clean rebuild:
+Alternatively, you can install with the development and research dependencies:
 
-```powershell
-..\.venv\Scripts\python.exe setup.py clean --all build_ext --force --inplace
+```bash
+pip install -e ".[dev,research]"
 ```
 
-## Common Commands
+<!-- Then, installing the necessary build tools:
 
-Run the full v2 suite:
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest optical_networking_gym_v2\tests -q
+```bash
+pip install -U pip setuptools Cython numpy
 ```
 
-Run the benchmark harness:
+Then, it is time to build the package:
 
-```powershell
-.\.venv\Scripts\python.exe optical_networking_gym_v2\benchmarks\run_hot_path_benchmarks.py
+```bash
+python setup.py build_ext -i
 ```
 
-Run the integrated comparison harness:
+Finally, we need to install the package: -->
 
-```powershell
-.\.venv\Scripts\python.exe optical_networking_gym_v2\benchmarks\run_integrated_benchmarks.py
+
+## Development
+
+To install the development dependencies, after the installation steps above, run:
+
+```bash
+pip install -e ".[dev]"
 ```
 
-Run the visual smoke test report:
+To build and run tests:
 
-```powershell
-.\.venv\Scripts\python.exe optical_networking_gym_v2\examples\env_test.py --steps 6 --no-open
+```bash
+DEBUG=1 python setup.py clean --all build_ext --force --inplace && coverage run -m pytest && coverage report
 ```
 
-The visual report is written to `optical_networking_gym_v2/examples/results/`
-and includes:
+We recommend the use of VSCode with the extension `ktnrg45.vscode-cython` to enable code completion and highlighting in `.pyx` (Cython) files.
 
-- smoke-test assertions for reset, action mask, and heuristic validity
-- per-step action mask visualization
-- per-link spectrum occupancy visualization
-- a raw JSON payload next to the HTML report
+## Research
 
-See `examples/README.md` for the public example families and parallelism
-semantics.
+To install the research dependencies, after the installation steps above, run:
 
-## Layout
-
-```text
-optical_networking_gym_v2/
-  benchmarks/   profiling and comparison scripts
-  examples/     runnable demos and visual smoke tests
-  src/          v2 package source
-  tests/        automated verification
+```bash
+pip install -e ".[research]"
 ```
 
-## Notes
+# Contributing
 
-- Use the repo-local Python 3.11 environment from the outer workspace.
-- Cython-generated build outputs under `build/` and local report artifacts under
-  `examples/results/` are ignored by `.gitignore`.
-- The checked-in source tree under `src/` is the authoritative implementation
-  for the `v2` runtime.
+Contributions from the community are welcome.
+To start the process, open an issue in GitHub.
+Then, we can discuss the functionality, and if the feature you are interested in is of the interest of the maintainers.
+After that, we can accept pull requests.
+
+# Maintainers
+
+- Carlos Natalino <carlos.natalino@chalmers.se>

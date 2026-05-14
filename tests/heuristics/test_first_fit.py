@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from optical_networking_gym_v2 import make_env, set_topology_dir
+from optical_networking_gym_v2 import BUILTIN_TOPOLOGY_DIR, make_env, set_topology_dir
 from optical_networking_gym_v2.heuristics import (
     build_runtime_heuristic_context,
     select_disruption_aware_first_fit_action,
@@ -24,11 +24,7 @@ from optical_networking_gym_v2.runtime.request_analysis import PATH_FEATURE_NAME
 from optical_networking_gym_v2.optical.first_fit import (
     shortest_available_path_first_fit_best_modulation,
 )
-from pathlib import Path
-
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-TOPOLOGY_DIR = PROJECT_ROOT.parent / "examples" / "topologies"
+TOPOLOGY_DIR = BUILTIN_TOPOLOGY_DIR
 
 
 def test_select_first_fit_action_chooses_first_valid_non_reject() -> None:

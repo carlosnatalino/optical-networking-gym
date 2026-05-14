@@ -8,9 +8,12 @@ from optical_networking_gym_v2 import (
     OpticalEnv,
     ScenarioConfig,
     TopologyModel,
+    TrafficRecord,
+    TrafficTable,
     TrafficMode,
     get_modulations,
     select_first_fit_action,
+    write_traffic_table_jsonl,
 )
 from optical_networking_gym_v2.instrumentation.traces import write_step_trace_jsonl
 
@@ -20,10 +23,34 @@ TOPOLOGY_DIR = BUILTIN_TOPOLOGY_DIR
 RESULTS_DIR = Path(__file__).resolve().parents[1] / "results"
 
 
+def ensure_default_traffic_table(path: Path) -> None:
+    if path.exists():
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    table = TrafficTable(
+        traffic_table_version="v1",
+        table_id="ring4_static_example",
+        scenario_id="ring4_static_first_fit_trace",
+        topology_id="ring_4",
+        traffic_mode_source="hand_authored",
+        request_count=4,
+        time_unit="simulation_time",
+        bit_rate_unit="Gbps",
+        seed=42,
+    )
+    records = (
+        TrafficRecord(0, 0, 0, 1, 100, 0.5, 10.0, table.table_id, row_index=0),
+        TrafficRecord(1, 1, 1, 2, 40, 1.0, 12.0, table.table_id, row_index=1),
+        TrafficRecord(2, 2, 2, 3, 100, 1.5, 8.0, table.table_id, row_index=2),
+        TrafficRecord(3, 3, 3, 0, 10, 2.0, 6.0, table.table_id, row_index=3),
+    )
+    write_traffic_table_jsonl(path, table, records)
+
+
 def build_env(
     *,
     traffic_table_path: str | Path,
-    topology_name: str = "ring6",
+    topology_name: str = "ring_4",
     seed: int = 42,
     episode_length: int = 100,
     num_spectrum_resources: int = 50,
@@ -65,7 +92,7 @@ def build_env(
 def run_episode(
     *,
     traffic_table_path: str | Path,
-    topology_name: str = "ring6",
+    topology_name: str = "ring_4",
     seed: int = 42,
     episode_length: int = 100,
     num_spectrum_resources: int = 50,
@@ -124,7 +151,8 @@ def save_results(summary: dict[str, object], trace: dict[str, object]) -> tuple[
 
 
 def main() -> None:
-    traffic_table_path = RESULTS_DIR / "ring6__seed_42__traffic.jsonl"
+    traffic_table_path = RESULTS_DIR / "ring_4__seed_42__traffic.jsonl"
+    ensure_default_traffic_table(traffic_table_path)
     summary, trace = run_episode(traffic_table_path=traffic_table_path)
     summary_path, trace_path = save_results(summary, trace)
     print(f"Steps: {summary['steps']}  |  Total reward: {summary['total_reward']:.2f}")

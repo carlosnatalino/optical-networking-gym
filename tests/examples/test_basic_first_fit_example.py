@@ -3,12 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from optical_networking_gym_v2 import set_topology_dir
+from optical_networking_gym_v2 import BUILTIN_TOPOLOGY_DIR, set_topology_dir
 from optical_networking_gym_v2.optical.first_fit_example import run_episode
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-TOPOLOGY_DIR = PROJECT_ROOT.parent / "examples" / "topologies"
+TOPOLOGY_DIR = BUILTIN_TOPOLOGY_DIR
 
 
 def test_basic_first_fit_example_writes_results_file(tmp_path: Path) -> None:
