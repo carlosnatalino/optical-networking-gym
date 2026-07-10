@@ -3,68 +3,53 @@ An Open-Source Toolkit for Benchmarking Resource Assignment Problems in Optical 
 
 ## Installation
 
-We recommend installing an environment using Python's *venv* module:
+We recommend [uv](https://docs.astral.sh/uv/) for environment management:
+
+```bash
+uv venv --python 3.13 .venv
+source .venv/bin/activate
+uv pip install -e ".[dev]"
+```
+
+Build the Cython extensions in place and run the tests in one command:
+
+```bash
+DEBUG=1 python setup.py build_ext --inplace && coverage run -m pytest && coverage report
+```
+
+Alternatively, using Python's built-in *venv* module and pip:
 
 ```bash
 python -m venv .venv
-```
-
-Then activating it:
-
-```bash
 source .venv/bin/activate
-```
-
-Then, install the project:
-
-```bash
 pip install -e .
 ```
 
-Alternatively, you can install with the development and research dependencies:
+### Optional dependency groups
+
+- `dev`: test and quality tooling (`pytest`, `coverage`, `mypy`, `ruff`, `Cython`, `setuptools`).
+- `research`: plotting and notebook tooling (`matplotlib`, `jupyterlab`, `pandas`).
+
+Install both with:
 
 ```bash
-pip install -e ".[dev,research]"
+uv pip install -e ".[dev,research]"
 ```
 
-<!-- Then, installing the necessary build tools:
+## Quickstart
 
 ```bash
-pip install -U pip setuptools Cython numpy
+python examples/quickstart/basic_first_fit.py
 ```
 
-Then, it is time to build the package:
-
-```bash
-python setup.py build_ext -i
-```
-
-Finally, we need to install the package: -->
-
+See `examples/INVENTORY.md` for the full list of examples, and `DEVELOPMENT.md`
+for the development workflow (build, tests, lint, type check).
 
 ## Development
 
-To install the development dependencies, after the installation steps above, run:
-
-```bash
-pip install -e ".[dev]"
-```
-
-To build and run tests:
-
-```bash
-DEBUG=1 python setup.py clean --all build_ext --force --inplace && coverage run -m pytest && coverage report
-```
+See [DEVELOPMENT.md](DEVELOPMENT.md).
 
 We recommend the use of VSCode with the extension `ktnrg45.vscode-cython` to enable code completion and highlighting in `.pyx` (Cython) files.
-
-## Research
-
-To install the research dependencies, after the installation steps above, run:
-
-```bash
-pip install -e ".[research]"
-```
 
 # Contributing
 

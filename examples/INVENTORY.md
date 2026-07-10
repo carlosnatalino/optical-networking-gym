@@ -1,28 +1,39 @@
 # Examples Inventory
 
-## keep-public
+What actually ships under `examples/`:
 
-- `quickstart/basic_first_fit.py`: first-path canonical API example.
-- `basic_first_fit.py`: compatibility entry point for the first-fit example.
-- `env_test.py`: visual smoke report.
-- `SBRT2026/osnr_margin_sweep.py`: publication margin sweep.
-- `SBRT2026/trace_disruptions.py`: disruption trace script.
-- `SBRT2026/judge_heuristics_load_sweep.py`: SBRT2026 entry point for judge heuristic sweep.
+## Getting started
 
-## keep-advanced
+- `quickstart/basic_first_fit.py`: first-path canonical API example
+  (`make_env` + first-fit heuristic over one episode).
+- `basic_first_fit.py`: compatibility entry point for the quickstart example.
+- `env_test.py`: visual smoke report of a short episode.
 
-- `heuristics/*.py`: advanced heuristic and runtime comparison examples.
-- `llm/*.py`: judge research scripts and support tools.
-- `legacy_benchmark/*.py`: legacy benchmark comparison examples.
-- `analysis/*.py`: local analysis/profiling helpers.
-- `static_first_fit_trace.py`: compatibility wrapper for the heuristic trace example.
+## Heuristics
+
+- `heuristics/masked_first_fit.py`, `heuristics/masked_random.py`: policies
+  driven by the action mask.
+- `heuristics/runtime_first_fit.py`, `heuristics/runtime_random.py`: policies
+  driven by the runtime heuristic context.
+- `heuristics/load_sweep.py`: sweep episode blocking across loads and policies.
+- `heuristics/static_first_fit_trace.py`: replay a captured traffic table and
+  write a step trace.
+- `load_sweep.py`, `static_first_fit_trace.py`: compatibility wrappers for the
+  scripts above.
+
+## Benchmarks and research
+
+- `JOCN_Benchmark_2024/`: reproduction of the JOCN 2024 benchmark scenario
+  (`graph_load.py`, `graph_margin.py`, `graph_launch_power.py`, `plots.ipynb`,
+  `README.md`).
+- `legacy_benchmark/osnr_margin_sweep.py` (+ analysis notebook): OSNR margin
+  sweep matching the legacy benchmark setup.
+
+## Analysis and tooling
+
+- `analysis/debug_profiling.py`, `debug_profiling.py`: local profiling helpers.
 - `rl/random_policy.py` and `rl/README.md`: RL smoke/example material.
 
-## archive-later
+## Outputs
 
-- Historical generated outputs under `examples/**/results/`.
-- Locked legacy `SBRT26/results/` contents left in place by Windows; ignored by `.gitignore`.
-
-## remove
-
-- No source scripts were removed in this milestone. Generated outputs are ignored and can be deleted once no process holds them open.
+- Generated outputs are written under `examples/**/results/` and are gitignored.
