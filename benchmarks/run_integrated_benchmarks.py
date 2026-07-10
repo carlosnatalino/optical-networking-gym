@@ -12,7 +12,6 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from optical_networking_gym_v2.bench.integrated_benchmarking import (
-    benchmark_integrated_episode_vs_legacy,
     benchmark_simulator_episode,
     profile_simulator_episode,
 )
@@ -30,7 +29,6 @@ def main() -> int:
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--top-n", type=int, default=15)
-    parser.add_argument("--skip-legacy", action="store_true")
     parser.add_argument("--json-output", type=Path)
     args = parser.parse_args()
 
@@ -57,18 +55,6 @@ def main() -> int:
             top_n=args.top_n,
         ),
     }
-    if not args.skip_legacy:
-        results["legacy_comparison"] = benchmark_integrated_episode_vs_legacy(
-            topology_id=args.topology_id,
-            k_paths=args.k_paths,
-            num_spectrum_resources=args.num_spectrum_resources,
-            request_count=args.request_count,
-            seed=args.seed,
-            load=args.load,
-            mean_holding_time=args.mean_holding_time,
-            repeats=args.repeats,
-            warmup=args.warmup,
-        )
 
     rendered = json.dumps(results, indent=2)
     if args.json_output is not None:

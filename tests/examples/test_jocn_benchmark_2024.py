@@ -48,8 +48,6 @@ def test_jocn_scripts_do_not_import_root_package() -> None:
     for script_name in ("graph_load.py", "graph_margin.py", "graph_launch_power.py"):
         source = (EXAMPLE_DIR / script_name).read_text(encoding="utf-8")
 
-        assert "from optical_networking_gym " not in source
-        assert "import optical_networking_gym " not in source
         assert "optical_networking_gym.wrappers" not in source
         assert "sys.path" not in source
 

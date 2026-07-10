@@ -5,10 +5,6 @@ from importlib import import_module
 _EXPORTS = {
     "benchmark_action_mask": (".benchmarking", "benchmark_action_mask"),
     "benchmark_allocation": (".benchmarking", "benchmark_allocation"),
-    "benchmark_integrated_episode_vs_legacy": (
-        ".integrated_benchmarking",
-        "benchmark_integrated_episode_vs_legacy",
-    ),
     "benchmark_observation": (".benchmarking", "benchmark_observation"),
     "benchmark_qot_engine": (".benchmarking", "benchmark_qot_engine"),
     "benchmark_request_analysis": (".benchmarking", "benchmark_request_analysis"),
@@ -16,10 +12,6 @@ _EXPORTS = {
     "benchmark_runtime_state": (".benchmarking", "benchmark_runtime_state"),
     "benchmark_simulator_episode": (".integrated_benchmarking", "benchmark_simulator_episode"),
     "benchmark_statistics_step_info": (".benchmarking", "benchmark_statistics_step_info"),
-    "compare_simulator_episode_with_legacy": (
-        ".integrated_benchmarking",
-        "compare_simulator_episode_with_legacy",
-    ),
     "profile_simulator_episode": (".integrated_benchmarking", "profile_simulator_episode"),
 }
 

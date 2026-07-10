@@ -107,10 +107,6 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "available_slots_for_path": (".network.allocation", "available_slots_for_path"),
     "benchmark_action_mask": (".bench.benchmarking", "benchmark_action_mask"),
     "benchmark_allocation": (".bench.benchmarking", "benchmark_allocation"),
-    "benchmark_integrated_episode_vs_legacy": (
-        ".bench.integrated_benchmarking",
-        "benchmark_integrated_episode_vs_legacy",
-    ),
     "benchmark_observation": (".bench.benchmarking", "benchmark_observation"),
     "benchmark_qot_engine": (".bench.benchmarking", "benchmark_qot_engine"),
     "benchmark_request_analysis": (".bench.benchmarking", "benchmark_request_analysis"),
@@ -120,10 +116,6 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "benchmark_statistics_step_info": (".bench.benchmarking", "benchmark_statistics_step_info"),
     "build_first_fit_allocation": (".network.allocation", "build_first_fit_allocation"),
     "candidate_starts": (".network.allocation", "candidate_starts"),
-    "compare_simulator_episode_with_legacy": (
-        ".bench.integrated_benchmarking",
-        "compare_simulator_episode_with_legacy",
-    ),
     "compute_required_slots": (".network.allocation", "compute_required_slots"),
     "occupied_slot_range": (".network.allocation", "occupied_slot_range"),
     "path_is_free": (".network.allocation", "path_is_free"),

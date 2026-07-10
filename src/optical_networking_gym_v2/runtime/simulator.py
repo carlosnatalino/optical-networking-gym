@@ -5,7 +5,6 @@ from typing import Any
 
 import numpy as np
 
-# from optical_networking_gym.trace_utils import normalize_trace_payload  # legacy v1
 from optical_networking_gym_v2.contracts import (
     Allocation,
     ServiceRequest,
