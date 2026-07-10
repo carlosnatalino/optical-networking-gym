@@ -43,7 +43,9 @@ exclude = ["build", ".venv", "docs"]
 
 [tool.mypy]
 files = ["src"]
-python_version = "3.11"
+# numpy >= 2.5 ships PEP 695 "type" statements in its stubs, which mypy only
+# accepts when analysing as Python >= 3.12. Runtime support stays >= 3.11.
+python_version = "3.12"
 ignore_missing_imports = true
 check_untyped_defs = true
 

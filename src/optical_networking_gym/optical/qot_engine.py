@@ -5,7 +5,13 @@ import math
 
 import numpy as np
 
-from optical_networking_gym.contracts import Modulation, QoTRequest, QoTResult, ServiceQoTUpdate
+from optical_networking_gym.contracts import (
+    Modulation,
+    QoTRequest,
+    QoTResult,
+    ServiceQoTUpdate,
+    ServiceRequest,
+)
 from .kernels.qot_kernel import accumulate_link_noise, summarize_candidate_starts
 from optical_networking_gym.runtime.runtime_state import RuntimeState
 from optical_networking_gym.network.topology import PathRecord, TopologyModel
@@ -107,7 +113,7 @@ class QoTEngine:
 
     def build_candidate(
         self,
-        request: object,
+        request: ServiceRequest,
         path: PathRecord,
         modulation: Modulation,
         service_slot_start: int,

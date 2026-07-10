@@ -66,21 +66,30 @@ def _geo_distance(latlong1: tuple[float, float], latlong2: tuple[float, float]) 
     return radius_km * c
 
 
+def _element_text(element: xml.dom.minidom.Element) -> str:
+    first_child = element.childNodes[0]
+    if not isinstance(first_child, xml.dom.minidom.Text):
+        raise ValueError(f"expected text content in <{element.tagName}> element")
+    return str(first_child.data)
+
+
 def _read_sndlib_topology(file_path: Path) -> nx.Graph:
     graph = nx.Graph()
     with file_path.open("rt", encoding="utf-8") as handle:
         tree = xml.dom.minidom.parse(handle)
     document = tree.documentElement
+    if document is None:
+        raise ValueError(f"invalid SNDlib topology file: {file_path}")
     coordinates_type = document.getElementsByTagName("nodes")[0].getAttribute("coordinatesType")
     graph.graph["coordinatesType"] = coordinates_type
     for node_index, node in enumerate(document.getElementsByTagName("node")):
-        x = float(node.getElementsByTagName("x")[0].childNodes[0].data)
-        y = float(node.getElementsByTagName("y")[0].childNodes[0].data)
+        x = float(_element_text(node.getElementsByTagName("x")[0]))
+        y = float(_element_text(node.getElementsByTagName("y")[0]))
         graph.add_node(node.getAttribute("id"), pos=(x, y), id=node_index)
     edge_index = 0
     for link in document.getElementsByTagName("link"):
-        source = link.getElementsByTagName("source")[0].childNodes[0].data
-        target = link.getElementsByTagName("target")[0].childNodes[0].data
+        source = _element_text(link.getElementsByTagName("source")[0])
+        target = _element_text(link.getElementsByTagName("target")[0])
         if graph.has_edge(source, target):
             continue
         if coordinates_type == "geographical":

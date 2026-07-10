@@ -158,7 +158,7 @@ def write_csv_rows(
     *,
     path: Path,
     fieldnames: Sequence[str],
-    rows: Sequence[Mapping[str, Scalar]],
+    rows: Sequence[Mapping[str, object]],
 ) -> None:
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)

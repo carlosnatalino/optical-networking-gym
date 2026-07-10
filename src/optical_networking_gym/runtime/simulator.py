@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import replace
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -23,7 +24,7 @@ from optical_networking_gym.runtime.action_codec import (
     total_actions,
 )
 from optical_networking_gym.runtime.request_analysis import RequestAnalysis, RequestAnalysisEngine
-from optical_networking_gym.runtime.runtime_state import RuntimeState
+from optical_networking_gym.runtime.runtime_state import ActiveService, RuntimeState
 from optical_networking_gym.runtime.step_info import StepInfo
 from optical_networking_gym.config.scenario import ScenarioConfig
 from optical_networking_gym.stats.statistics import Statistics
@@ -260,7 +261,8 @@ class Simulator:
         blocked_qot = 0
         rejected_by_agent = 0
         for step in self._captured_trace_steps:
-            status = str(step["outcome"]["status"])
+            outcome = cast("Mapping[str, object]", step["outcome"])
+            status = str(outcome["status"])
             if status == "accepted":
                 accepted += 1
             elif status == "blocked_resources":
@@ -269,7 +271,7 @@ class Simulator:
                 blocked_qot += 1
             elif status == "rejected_by_agent":
                 rejected_by_agent += 1
-        trace_payload = {
+        trace_payload: dict[str, object] = {
             "header": {
                 "record_type": "trace_header",
                 "trace_version": "v1",
@@ -294,7 +296,7 @@ class Simulator:
                 "rejected_by_agent": rejected_by_agent,
             },
         }
-        return trace_payload  # normalize_trace_payload removed (legacy v1)
+        return trace_payload
 
     def save_step_trace_jsonl(self, file_path: str) -> str:
         trace_payload = self.export_step_trace()
@@ -349,7 +351,7 @@ class Simulator:
             "row_index": request.table_row_index if request.table_row_index is not None else request.request_index,
         }
 
-    def _trace_active_service_payload(self, service: object) -> dict[str, object]:
+    def _trace_active_service_payload(self, service: ActiveService) -> dict[str, object]:
         return {
             "service_id": int(service.service_id),
             "source_id": int(service.request.source_id),
@@ -429,7 +431,7 @@ class Simulator:
                 None,
             )
 
-        decoded_payload = {
+        decoded_payload: dict[str, object] = {
             "path_index": int(decoded_action.path_index),
             "modulation_index": None,
             "modulation_name": None,

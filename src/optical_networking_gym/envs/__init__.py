@@ -1,12 +1,22 @@
 from __future__ import annotations
 
 from importlib import import_module
+from typing import TYPE_CHECKING
 
-_EXPORTS = {
+if TYPE_CHECKING:
+    # Static-analysis view of the lazy export table below. Kept lazy at
+    # runtime because eager subpackage imports create import cycles
+    # (e.g. contracts -> network -> runtime -> contracts and
+    # optical -> envs -> runtime -> features -> optical).
+    from .optical_env import OpticalEnv
+
+_EXPORTS: dict[str, tuple[str, str]] = {
     "OpticalEnv": (".optical_env", "OpticalEnv"),
 }
 
-__all__ = list(_EXPORTS)
+__all__ = [
+    "OpticalEnv",
+]
 
 
 def __getattr__(name: str) -> object:

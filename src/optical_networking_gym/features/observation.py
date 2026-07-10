@@ -26,7 +26,7 @@ class Observation:
     ) -> None:
         if not config.modulations:
             raise ValueError("Observation requires ScenarioConfig.modulations")
-        if config.modulations_to_consider <= 0:
+        if config.resolved_modulations_to_consider <= 0:
             raise ValueError("Observation requires modulations_to_consider > 0")
         self.config = config
         self.topology = topology
@@ -42,7 +42,7 @@ class Observation:
             path_mod_feature_names=analysis_engine.path_mod_feature_names,
             path_slot_feature_names=analysis_engine.path_slot_feature_names,
             k_paths=config.k_paths,
-            modulation_count=config.modulations_to_consider,
+            modulation_count=config.resolved_modulations_to_consider,
             num_spectrum_resources=config.num_spectrum_resources,
         )
         self.empty_observation = np.empty(0, dtype=np.float32)

@@ -25,7 +25,7 @@ class ActionMask:
     ) -> None:
         if not config.modulations:
             raise ValueError("ActionMask requires ScenarioConfig.modulations")
-        if config.modulations_to_consider <= 0:
+        if config.resolved_modulations_to_consider <= 0:
             raise ValueError("ActionMask requires modulations_to_consider > 0")
         self.config = config
         self.topology = topology

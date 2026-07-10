@@ -3,9 +3,18 @@ from __future__ import annotations
 from collections import Counter
 import json
 from pathlib import Path
+from typing import SupportsFloat, SupportsInt, cast
 
 from optical_networking_gym.api.factory import make_env
 from optical_networking_gym.heuristics.masked_heuristics import select_first_fit_action
+
+
+def _as_float(value: object) -> float:
+    return float(cast(SupportsFloat, value))
+
+
+def _as_int(value: object) -> int:
+    return int(cast(SupportsInt, value))
 
 
 PACKAGE_PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -64,12 +73,12 @@ def run_episode(
         "episode_length": episode_length,
         "steps": steps,
         "total_reward": total_reward,
-        "episode_service_blocking_rate": float(last_info.get("episode_service_blocking_rate", 0.0)),
-        "episode_service_served_rate": float(last_info.get("episode_service_served_rate", 0.0)),
-        "episode_bit_rate_blocking_rate": float(last_info.get("episode_bit_rate_blocking_rate", 0.0)),
-        "episode_services_processed": int(last_info.get("episode_services_processed", steps)),
-        "episode_services_accepted": int(last_info.get("episode_services_accepted", 0)),
-        "episode_services_served": int(last_info.get("episode_services_served", 0)),
+        "episode_service_blocking_rate": _as_float(last_info.get("episode_service_blocking_rate", 0.0)),
+        "episode_service_served_rate": _as_float(last_info.get("episode_service_served_rate", 0.0)),
+        "episode_bit_rate_blocking_rate": _as_float(last_info.get("episode_bit_rate_blocking_rate", 0.0)),
+        "episode_services_processed": _as_int(last_info.get("episode_services_processed", steps)),
+        "episode_services_accepted": _as_int(last_info.get("episode_services_accepted", 0)),
+        "episode_services_served": _as_int(last_info.get("episode_services_served", 0)),
         "status_counts": dict(statuses),
         "blocked_due_to_resources_decisions": int(statuses.get("blocked_resources", 0)),
         "blocked_due_to_qot_decisions": int(statuses.get("blocked_qot", 0)),

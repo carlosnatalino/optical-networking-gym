@@ -1,8 +1,25 @@
 from __future__ import annotations
 
 from importlib import import_module
+from typing import TYPE_CHECKING
 
-_EXPORTS = {
+if TYPE_CHECKING:
+    # Static-analysis view of the lazy export table below. Kept lazy at
+    # runtime because eager subpackage imports create import cycles
+    # (e.g. contracts -> network -> runtime -> contracts and
+    # optical -> envs -> runtime -> features -> optical).
+    from .allocation import (
+        available_slots_for_path,
+        build_first_fit_allocation,
+        candidate_starts,
+        compute_required_slots,
+        occupied_slot_range,
+        path_is_free,
+    )
+    from .topology import Link, PathRecord, Span, TopologyModel
+    from .traffic_table_io import read_traffic_table_jsonl, write_traffic_table_jsonl
+
+_EXPORTS: dict[str, tuple[str, str]] = {
     "Link": (".topology", "Link"),
     "PathRecord": (".topology", "PathRecord"),
     "Span": (".topology", "Span"),
@@ -17,7 +34,20 @@ _EXPORTS = {
     "write_traffic_table_jsonl": (".traffic_table_io", "write_traffic_table_jsonl"),
 }
 
-__all__ = list(_EXPORTS)
+__all__ = [
+    "Link",
+    "PathRecord",
+    "Span",
+    "TopologyModel",
+    "available_slots_for_path",
+    "build_first_fit_allocation",
+    "candidate_starts",
+    "compute_required_slots",
+    "occupied_slot_range",
+    "path_is_free",
+    "read_traffic_table_jsonl",
+    "write_traffic_table_jsonl",
+]
 
 
 def __getattr__(name: str) -> object:

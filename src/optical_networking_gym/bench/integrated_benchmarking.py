@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import cProfile
+from collections.abc import Iterable
 import io
 from pathlib import Path
 import pstats
 import statistics
 import time
+from typing import SupportsFloat, SupportsInt, cast
 
 import numpy as np
 
@@ -20,6 +22,14 @@ from optical_networking_gym.runtime.traffic_model import TrafficModel
 
 
 TOPOLOGY_DIR = BUILTIN_TOPOLOGY_DIR
+
+
+def _as_float(value: object) -> float:
+    return float(cast(SupportsFloat, value))
+
+
+def _as_int(value: object) -> int:
+    return int(cast(SupportsInt, value))
 
 
 def _durations_summary_us(durations_ns: list[int]) -> tuple[float, float]:
@@ -155,7 +165,7 @@ def _run_v2_episode(
         step_durations.append(step_elapsed)
 
         statuses.append(str(info["status"]))
-        osnrs.append(float(info.get("osnr", 0.0)))
+        osnrs.append(_as_float(info.get("osnr", 0.0)))
         if simulator.state is not None:
             active_counts.append(len(simulator.state.active_services_by_id))
             slot_snapshots.append((simulator.state.slot_allocation == -1).astype(np.int32).copy())
@@ -220,10 +230,12 @@ def benchmark_simulator_episode(
         episode_elapsed = time.perf_counter_ns() - start_ns
         if repeat_index < warmup:
             continue
-        reset_durations.append(int(result["reset_ns"]))
-        step_durations.extend(int(duration) for duration in result["step_durations_ns"])
+        reset_durations.append(_as_int(result["reset_ns"]))
+        step_durations.extend(
+            _as_int(duration) for duration in cast(Iterable[object], result["step_durations_ns"])
+        )
         episode_durations.append(episode_elapsed)
-        accepted = int(result["episode_services_accepted"])
+        accepted = _as_int(result["episode_services_accepted"])
 
     reset_mean_us, reset_p95_us = _durations_summary_us(reset_durations)
     step_mean_us, step_p95_us = _durations_summary_us(step_durations)
@@ -290,8 +302,14 @@ def profile_simulator_episode(
     elapsed_ns = time.perf_counter_ns() - start_ns
 
     stats = pstats.Stats(profiler).strip_dirs().sort_stats("cumtime")
+    # pstats.Stats populates `stats` (and honours `stream`) dynamically; the
+    # attributes are not declared in typeshed, hence getattr/setattr.
+    stats_table = cast(
+        "dict[tuple[str, int, str], tuple[int, int, float, float, object]]",
+        getattr(stats, "stats"),
+    )
     entries: list[dict[str, object]] = []
-    for function_descriptor, function_stats in stats.stats.items():
+    for function_descriptor, function_stats in stats_table.items():
         primitive_calls, total_calls, total_time, cumulative_time, _ = function_stats
         file_name, line_number, function_name = function_descriptor
         entries.append(
@@ -305,10 +323,10 @@ def profile_simulator_episode(
                 "cumulative_time_s": float(cumulative_time),
             }
         )
-    entries.sort(key=lambda entry: entry["cumulative_time_s"], reverse=True)
+    entries.sort(key=lambda entry: _as_float(entry["cumulative_time_s"]), reverse=True)
 
     stream = io.StringIO()
-    stats.stream = stream
+    setattr(stats, "stream", stream)
     stats.print_stats(top_n)
 
     return {

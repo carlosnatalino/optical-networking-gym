@@ -281,6 +281,7 @@ def benchmark_action_mask(*, iterations: int = 250, warmup: int = 25) -> dict[st
         if index < warmup:
             continue
         warm_durations.append(elapsed)
+        assert mask is not None  # enable_action_mask is set in the benchmark config
         valid_actions = int(mask[:-1].sum())
 
     for index in range(iterations + warmup):
@@ -291,6 +292,7 @@ def benchmark_action_mask(*, iterations: int = 250, warmup: int = 25) -> dict[st
         if index < warmup:
             continue
         cold_durations.append(elapsed)
+        assert mask is not None  # enable_action_mask is set in the benchmark config
         valid_actions = int(mask[:-1].sum())
 
     warm_mean_us, warm_p95_us = _durations_summary_us(warm_durations)

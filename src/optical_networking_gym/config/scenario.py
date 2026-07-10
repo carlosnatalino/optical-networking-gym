@@ -120,6 +120,13 @@ class ScenarioConfig:
         if self.traffic_mode is TrafficMode.STATIC and self.traffic_source is None:
             raise ValueError("traffic_source is required when traffic_mode is static")
 
+    @property
+    def resolved_modulations_to_consider(self) -> int:
+        """``modulations_to_consider`` after ``__post_init__`` resolution (never ``None``)."""
+        value = self.modulations_to_consider
+        assert value is not None  # resolved in __post_init__
+        return value
+
     def _normalize_bit_rates(self, bit_rates: tuple[int, ...] | None) -> tuple[int, ...]:
         raw_values = (10, 40, 100, 400) if bit_rates is None else bit_rates
         if not isinstance(raw_values, Sequence) or len(raw_values) == 0:

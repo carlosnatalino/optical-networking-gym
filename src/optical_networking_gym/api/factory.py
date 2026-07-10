@@ -109,9 +109,11 @@ def make_env(
             raise ValueError("overrides cannot be combined with config")
         if modulations is not _UNSET:
             raise ValueError("modulations cannot be combined with config")
-        resolved_config = config
         if isinstance(scenario, ScenarioConfig):
             resolved_config = scenario
+        else:
+            assert config is not None  # guaranteed by the branch condition
+            resolved_config = config
     elif isinstance(scenario, str):
         if topology_name is not None:
             raise ValueError("topology_name cannot be combined with scenario")

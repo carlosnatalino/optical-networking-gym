@@ -1,8 +1,21 @@
 from __future__ import annotations
 
 from importlib import import_module
+from typing import TYPE_CHECKING
 
-_EXPORTS = {
+if TYPE_CHECKING:
+    # Static-analysis view of the lazy export table below. Kept lazy at
+    # runtime because eager subpackage imports create import cycles
+    # (e.g. contracts -> network -> runtime -> contracts and
+    # optical -> envs -> runtime -> features -> optical).
+    from .action_codec import decode_action, encode_action, reject_action, total_actions
+    from .request_analysis import RequestAnalysis, RequestAnalysisEngine
+    from .runtime_state import ActiveService, RuntimeState
+    from .simulator import Simulator
+    from .step_info import StepInfo
+    from .traffic_model import TrafficModel
+
+_EXPORTS: dict[str, tuple[str, str]] = {
     "ActiveService": (".runtime_state", "ActiveService"),
     "RequestAnalysis": (".request_analysis", "RequestAnalysis"),
     "RequestAnalysisEngine": (".request_analysis", "RequestAnalysisEngine"),
@@ -16,7 +29,19 @@ _EXPORTS = {
     "total_actions": (".action_codec", "total_actions"),
 }
 
-__all__ = list(_EXPORTS)
+__all__ = [
+    "ActiveService",
+    "RequestAnalysis",
+    "RequestAnalysisEngine",
+    "RuntimeState",
+    "Simulator",
+    "StepInfo",
+    "TrafficModel",
+    "decode_action",
+    "encode_action",
+    "reject_action",
+    "total_actions",
+]
 
 
 def __getattr__(name: str) -> object:

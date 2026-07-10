@@ -1,14 +1,28 @@
 from __future__ import annotations
 
 from importlib import import_module
+from typing import TYPE_CHECKING
 
-_EXPORTS = {
+if TYPE_CHECKING:
+    # Static-analysis view of the lazy export table below. Kept lazy at
+    # runtime because eager subpackage imports create import cycles
+    # (e.g. contracts -> network -> runtime -> contracts and
+    # optical -> envs -> runtime -> features -> optical).
+    from .action_mask import ActionMask
+    from .observation import Observation
+    from .reward_function import RewardFunction
+
+_EXPORTS: dict[str, tuple[str, str]] = {
     "ActionMask": (".action_mask", "ActionMask"),
     "Observation": (".observation", "Observation"),
     "RewardFunction": (".reward_function", "RewardFunction"),
 }
 
-__all__ = list(_EXPORTS)
+__all__ = [
+    "ActionMask",
+    "Observation",
+    "RewardFunction",
+]
 
 
 def __getattr__(name: str) -> object:

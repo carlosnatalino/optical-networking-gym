@@ -1,8 +1,24 @@
 from __future__ import annotations
 
 from importlib import import_module
+from typing import TYPE_CHECKING
 
-_EXPORTS = {
+if TYPE_CHECKING:
+    # Static-analysis view of the lazy export table below. Kept lazy at
+    # runtime because eager subpackage imports create import cycles
+    # (e.g. contracts -> network -> runtime -> contracts and
+    # optical -> envs -> runtime -> features -> optical).
+    from .action_mask import ActionSelection
+    from .allocation import Allocation
+    from .enums import MaskMode, RewardProfile, Status, TrafficMode
+    from .modulation import Modulation
+    from .observation import ObservationSchema, ObservationSnapshot
+    from .qot import QoTRequest, QoTResult, ServiceQoTUpdate
+    from .reward import CandidateRewardMetrics, RewardBreakdown, RewardInput
+    from .step import StatisticsSnapshot, StepTransition
+    from .traffic import ServiceRequest, TrafficRecord, TrafficTable
+
+_EXPORTS: dict[str, tuple[str, str]] = {
     "ActionSelection": (".action_mask", "ActionSelection"),
     "Allocation": (".allocation", "Allocation"),
     "CandidateRewardMetrics": (".reward", "CandidateRewardMetrics"),
@@ -25,7 +41,28 @@ _EXPORTS = {
     "TrafficTable": (".traffic", "TrafficTable"),
 }
 
-__all__ = list(_EXPORTS)
+__all__ = [
+    "ActionSelection",
+    "Allocation",
+    "CandidateRewardMetrics",
+    "MaskMode",
+    "Modulation",
+    "ObservationSchema",
+    "ObservationSnapshot",
+    "QoTRequest",
+    "QoTResult",
+    "RewardBreakdown",
+    "RewardInput",
+    "RewardProfile",
+    "ServiceQoTUpdate",
+    "ServiceRequest",
+    "StatisticsSnapshot",
+    "Status",
+    "StepTransition",
+    "TrafficMode",
+    "TrafficRecord",
+    "TrafficTable",
+]
 
 
 def __getattr__(name: str) -> object:

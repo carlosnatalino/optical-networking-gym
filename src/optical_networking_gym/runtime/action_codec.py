@@ -14,7 +14,7 @@ class EncodedAction:
 
 
 def total_actions(config: ScenarioConfig) -> int:
-    return (config.k_paths * config.modulations_to_consider * config.num_spectrum_resources) + 1
+    return (config.k_paths * config.resolved_modulations_to_consider * config.num_spectrum_resources) + 1
 
 
 def reject_action(config: ScenarioConfig) -> int:
@@ -28,7 +28,7 @@ def encode_action(
     modulation_offset: int,
     initial_slot: int,
 ) -> int:
-    path_stride = config.modulations_to_consider * config.num_spectrum_resources
+    path_stride = config.resolved_modulations_to_consider * config.num_spectrum_resources
     return int(
         (path_index * path_stride)
         + (modulation_offset * config.num_spectrum_resources)
@@ -42,7 +42,7 @@ def decode_action(config: ScenarioConfig, action: int) -> EncodedAction | None:
     if action == reject_action(config):
         return None
 
-    path_stride = config.modulations_to_consider * config.num_spectrum_resources
+    path_stride = config.resolved_modulations_to_consider * config.num_spectrum_resources
     path_index = action // path_stride
     modulation_and_slot = action % path_stride
     modulation_offset = modulation_and_slot // config.num_spectrum_resources

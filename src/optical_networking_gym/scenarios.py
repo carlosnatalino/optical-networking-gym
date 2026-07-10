@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import fields, replace
 from itertools import product
-from typing import Any
+from typing import Any, cast
 
 from optical_networking_gym.config.scenario import ScenarioConfig
 from optical_networking_gym.contracts.modulation import Modulation
@@ -109,13 +109,15 @@ def _normalize_key(key: str) -> str:
 def _normalize_modulations(value: object) -> tuple[Modulation, ...]:
     if isinstance(value, str):
         return get_modulations(value)
-    values = tuple(value)  # type: ignore[arg-type]
+    if not isinstance(value, Iterable):
+        raise ValueError("modulations must be names or Modulation objects")
+    values: tuple[object, ...] = tuple(value)
     if not values:
         raise ValueError("modulations must contain at least one modulation")
     if all(isinstance(item, Modulation) for item in values):
-        return values  # type: ignore[return-value]
+        return cast("tuple[Modulation, ...]", values)
     if all(isinstance(item, str) for item in values):
-        return get_modulations(values)  # type: ignore[arg-type]
+        return get_modulations(cast("tuple[str, ...]", values))
     raise ValueError("modulations must be names or Modulation objects")
 
 

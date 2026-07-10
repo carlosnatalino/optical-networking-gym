@@ -11,7 +11,7 @@ from optical_networking_gym.runtime.runtime_state import RuntimeState
 from optical_networking_gym.network.allocation import compute_required_slots
 from optical_networking_gym.network.topology import PathRecord, TopologyModel
 from optical_networking_gym.optical.kernels.allocation_kernel import candidate_starts_array
-from optical_networking_gym.optical.qot_engine import QoTEngine
+from optical_networking_gym.optical.qot_engine import QoTEngine, _PreparedCandidateSummaryInputs
 
 try:
     from optical_networking_gym.runtime import _request_analysis_kernels as _request_analysis_kernels_module
@@ -261,14 +261,14 @@ class RequestAnalysisEngine:
     def __init__(self, config: ScenarioConfig, topology: TopologyModel, qot_engine: QoTEngine) -> None:
         if not config.modulations:
             raise ValueError("RequestAnalysisEngine requires ScenarioConfig.modulations")
-        if config.modulations_to_consider <= 0:
+        if config.resolved_modulations_to_consider <= 0:
             raise ValueError("RequestAnalysisEngine requires modulations_to_consider > 0")
         self.config = config
         self.topology = topology
         self.qot_engine = qot_engine
         self.cache_hits = 0
         self.cache_misses = 0
-        self._analysis_cache: dict[tuple[int, int, int, int, float], RequestAnalysis] = {}
+        self._analysis_cache: dict[tuple[int, int, int, int, float, bool], RequestAnalysis] = {}
         self._path_link_indices: dict[int, np.ndarray] = {
             path.id: np.asarray(path.link_ids, dtype=np.intp) for path in topology.paths
         }
@@ -333,7 +333,7 @@ class RequestAnalysisEngine:
         total_slots = self.config.num_spectrum_resources
         max_paths = self.config.k_paths
         full_modulation_count = len(self.config.modulations)
-        selected_count = self.config.modulations_to_consider
+        selected_count = self.config.resolved_modulations_to_consider
         block_count_scale = max(1, math.ceil(total_slots / 2))
         free_slots_ratio = float(np.count_nonzero(state.slot_allocation == -1)) / state.slot_allocation.size
         active_services_norm = min(
@@ -386,7 +386,7 @@ class RequestAnalysisEngine:
             dtype=np.float32,
         )
 
-        prepared_qot_inputs_by_path: list[object | None] = []
+        prepared_qot_inputs_by_path: list[_PreparedCandidateSummaryInputs | None] = []
         for path in paths:
             if self.config.mask_mode is MaskMode.RESOURCE_ONLY or self.config.qot_constraint == "DIST":
                 prepared_qot_inputs_by_path.append(None)
@@ -433,8 +433,10 @@ class RequestAnalysisEngine:
                         modulation_has_feasible_path = True
                     continue
 
+                prepared_inputs = prepared_qot_inputs_by_path[path_index]
+                assert prepared_inputs is not None  # populated unless RESOURCE_ONLY/DIST
                 batch = self.qot_engine._summarize_candidate_starts_prepared(
-                    prepared_inputs=prepared_qot_inputs_by_path[path_index],
+                    prepared_inputs=prepared_inputs,
                     service_id=request.service_id,
                     service_num_slots=required_slots,
                     candidate_starts=candidate_indices,
@@ -492,7 +494,7 @@ class RequestAnalysisEngine:
             (max_paths, selected_count, total_slots),
             np.nan,
         )
-        required_slots = _pad_array(
+        required_slots_selected = _pad_array(
             required_slots_full[:, selected_positions],
             (max_paths, selected_count),
             0,
@@ -559,7 +561,7 @@ class RequestAnalysisEngine:
             worst_link_nli_share_by_start=worst_link_nli_share,
             fragmentation_damage_num_blocks_by_start=fragmentation_damage_num_blocks,
             fragmentation_damage_largest_block_by_start=fragmentation_damage_largest_block,
-            required_slots_by_path_mod=required_slots,
+            required_slots_by_path_mod=required_slots_selected,
             action_mask=action_mask,
             mean_link_entropy=mean_link_entropy,
             path_route_cuts_norm_by_path=path_route_cuts_norm_by_path,
@@ -634,22 +636,23 @@ def _modulation_window_from_max_feasible(
     config: ScenarioConfig,
     max_feasible_modulation_index: int | None,
 ) -> tuple[int, ...]:
+    modulations_to_consider = config.resolved_modulations_to_consider
     if max_feasible_modulation_index is None:
-        max_feasible_modulation_index = config.modulations_to_consider - 1
+        max_feasible_modulation_index = modulations_to_consider - 1
     else:
         max_feasible_modulation_index = max(
             max_feasible_modulation_index,
-            config.modulations_to_consider - 1,
+            modulations_to_consider - 1,
         )
 
-    start_index = max(0, max_feasible_modulation_index - (config.modulations_to_consider - 1))
+    start_index = max(0, max_feasible_modulation_index - (modulations_to_consider - 1))
     modulation_indices = tuple(
         reversed(
-            tuple(range(start_index, max_feasible_modulation_index + 1))[: config.modulations_to_consider]
+            tuple(range(start_index, max_feasible_modulation_index + 1))[:modulations_to_consider]
         )
     )
-    if len(modulation_indices) != config.modulations_to_consider:
-        return tuple(range(config.modulations_to_consider - 1, -1, -1))
+    if len(modulation_indices) != modulations_to_consider:
+        return tuple(range(modulations_to_consider - 1, -1, -1))
     return modulation_indices
 
 

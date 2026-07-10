@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 import random
 
@@ -9,6 +10,14 @@ from optical_networking_gym.contracts.traffic import ServiceRequest, TrafficReco
 from optical_networking_gym.config.scenario import ScenarioConfig
 from optical_networking_gym.network.topology import TopologyModel
 from optical_networking_gym.network.traffic_table_io import read_traffic_table_jsonl, write_traffic_table_jsonl
+
+
+@dataclass(frozen=True, slots=True)
+class _DynamicTrafficSource:
+    bit_rates: tuple[int, ...]
+    bit_rate_probabilities: tuple[float, ...]
+    mean_holding_time: float
+    mean_inter_arrival_time: float
 
 
 class TrafficModel:
@@ -28,16 +37,14 @@ class TrafficModel:
         self._table_id = self._build_table_id()
         self._captured_records: list[TrafficRecord] = []
 
+        self._dynamic_source: _DynamicTrafficSource | None = None
+        self._static_table: TrafficTable | None = None
+        self._static_records: tuple[TrafficRecord, ...] = ()
+        self._static_cursor = 0
         if config.traffic_mode is TrafficMode.DYNAMIC:
             self._dynamic_source = self._parse_dynamic_source(config.traffic_source)
-            self._static_table = None
-            self._static_records = ()
-            self._static_cursor = 0
-            return
-
-        self._dynamic_source = None
-        self._static_table, self._static_records = self._parse_static_source(config.traffic_source)
-        self._static_cursor = 0
+        else:
+            self._static_table, self._static_records = self._parse_static_source(config.traffic_source)
 
     def next_request(self) -> ServiceRequest:
         if self.config.traffic_mode is TrafficMode.DYNAMIC:
@@ -67,13 +74,13 @@ class TrafficModel:
     def _next_dynamic_request(self) -> ServiceRequest:
         assert self._dynamic_source is not None
         self._current_time += self._rng.expovariate(
-            1.0 / self._dynamic_source["mean_inter_arrival_time"]
+            1.0 / self._dynamic_source.mean_inter_arrival_time
         )
-        holding_time = self._rng.expovariate(1.0 / self._dynamic_source["mean_holding_time"])
+        holding_time = self._rng.expovariate(1.0 / self._dynamic_source.mean_holding_time)
         source_id, destination_id = self._sample_node_pair()
         bit_rate = self._rng.choices(
-            self._dynamic_source["bit_rates"],
-            weights=self._dynamic_source["bit_rate_probabilities"],
+            self._dynamic_source.bit_rates,
+            weights=self._dynamic_source.bit_rate_probabilities,
             k=1,
         )[0]
         request = ServiceRequest(
@@ -125,9 +132,7 @@ class TrafficModel:
         seed_fragment = "none" if self.config.seed is None else str(self.config.seed)
         return f"{self.config.scenario_id}__seed_{seed_fragment}"
 
-    def _parse_dynamic_source(
-        self, traffic_source: object | None
-    ) -> dict[str, tuple[int, ...] | tuple[float, ...] | float]:
+    def _parse_dynamic_source(self, traffic_source: object | None) -> _DynamicTrafficSource:
         source = {} if traffic_source is None else traffic_source
         if not isinstance(source, Mapping):
             raise ValueError("dynamic traffic_source must be a mapping when provided")
@@ -156,12 +161,12 @@ class TrafficModel:
             mean_inter_arrival_time = 1.0
         if mean_inter_arrival_time <= 0:
             raise ValueError("mean_inter_arrival_time must be positive")
-        return {
-            "bit_rates": bit_rates,
-            "bit_rate_probabilities": bit_rate_probabilities,
-            "mean_holding_time": mean_holding_time,
-            "mean_inter_arrival_time": mean_inter_arrival_time,
-        }
+        return _DynamicTrafficSource(
+            bit_rates=bit_rates,
+            bit_rate_probabilities=bit_rate_probabilities,
+            mean_holding_time=mean_holding_time,
+            mean_inter_arrival_time=mean_inter_arrival_time,
+        )
 
     def _parse_static_source(
         self, traffic_source: object | None

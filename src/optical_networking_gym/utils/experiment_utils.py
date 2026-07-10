@@ -9,10 +9,13 @@ from pathlib import Path
 import statistics
 import sys
 import time
-from typing import Callable
+from typing import Any, Callable, SupportsFloat, SupportsInt, cast
+
+import numpy as np
 
 from optical_networking_gym import (
     BUILTIN_TOPOLOGY_DIR,
+    OpticalEnv,
     ScenarioConfig,
     get_modulations,
     make_env,
@@ -37,7 +40,15 @@ DEFAULT_MAX_SPAN_LENGTH_KM = 80.0
 DEFAULT_ATTENUATION_DB_PER_KM = 0.2
 DEFAULT_NOISE_FIGURE_DB = 4.5
 
-EpisodePolicy = Callable[[object, dict[str, object]], int]
+EpisodePolicy = Callable[[OpticalEnv, dict[str, object]], int]
+
+
+def _as_float(value: object) -> float:
+    return float(cast(SupportsFloat, value))
+
+
+def _as_int(value: object) -> int:
+    return int(cast(SupportsInt, value))
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,8 +96,8 @@ class StepProgress(AbstractContextManager["StepProgress"]):
         self._interval = int(interval)
         self._enabled = bool(enabled)
         self._pending = 0
-        self._bar = nullcontext()
-        self._progress = None
+        self._bar: AbstractContextManager[object] = nullcontext()
+        self._progress: Any = None
 
     def __enter__(self) -> "StepProgress":
         if not self._enabled:
@@ -258,23 +269,23 @@ def build_modulation_index_to_name(modulation_names: str) -> dict[int, str]:
     }
 
 
-def select_masked_first_fit_policy(env: object, info: dict[str, object]) -> int:
+def select_masked_first_fit_policy(env: OpticalEnv, info: dict[str, object]) -> int:
     mask = info.get("mask")
     if mask is None and hasattr(env, "action_masks"):
         mask = env.action_masks()
     if mask is None:
         raise RuntimeError("first-fit policy requires an action mask")
-    return int(select_first_fit_action(mask))
+    return int(select_first_fit_action(np.asarray(mask)))
 
 
-def select_disruption_aware_first_fit_policy(env: object, info: dict[str, object]) -> int:
+def select_disruption_aware_first_fit_policy(env: OpticalEnv, info: dict[str, object]) -> int:
     del info
     if not hasattr(env, "heuristic_context"):
         raise RuntimeError("disruption-aware first-fit requires an env with heuristic_context()")
     return int(select_disruption_aware_first_fit_action(env.heuristic_context()))
 
 
-def select_policy_action(policy_name: str, env: object, info: dict[str, object]) -> int:
+def select_policy_action(policy_name: str, env: OpticalEnv, info: dict[str, object]) -> int:
     key = policy_name.strip().lower()
     if key in {"jocn_ksp_ff_bm", "ksp-ff-bm", "strategy_1", "1"}:
         return select_masked_first_fit_policy(env, info)
@@ -614,8 +625,8 @@ def _build_service_row(
     status = info.get("status", "")
     chosen_path_index = info.get("chosen_path_index", None)
     chosen_modulation_index = info.get("chosen_modulation_index", None)
-    osnr = float(info.get("osnr", 0.0))
-    osnr_req = float(info.get("osnr_req", 0.0))
+    osnr = _as_float(info.get("osnr", 0.0))
+    osnr_req = _as_float(info.get("osnr_req", 0.0))
     osnr_margin = osnr - osnr_req
 
     path_k = -1
@@ -629,7 +640,7 @@ def _build_service_row(
 
     if accepted and analysis is not None and chosen_path_index is not None:
         try:
-            path = analysis.paths[int(chosen_path_index)]
+            path = analysis.paths[_as_int(chosen_path_index)]
         except (IndexError, TypeError):
             path = None
         if path is not None:
@@ -638,7 +649,7 @@ def _build_service_row(
 
     if accepted and chosen_modulation_index is not None and simulator is not None:
         try:
-            modulation = simulator.config.modulations[int(chosen_modulation_index)]
+            modulation = simulator.config.modulations[_as_int(chosen_modulation_index)]
         except (IndexError, TypeError, AttributeError):
             modulation = None
         if modulation is not None:
@@ -677,10 +688,10 @@ def _build_service_row(
         "bit_rate": int(request.bit_rate),
         "accepted": accepted,
         "status": status,
-        "chosen_path_index": -1 if chosen_path_index is None else int(chosen_path_index),
+        "chosen_path_index": -1 if chosen_path_index is None else _as_int(chosen_path_index),
         "path_k": int(path_k),
         "path_length": float(path_length),
-        "chosen_modulation_index": -1 if chosen_modulation_index is None else int(chosen_modulation_index),
+        "chosen_modulation_index": -1 if chosen_modulation_index is None else _as_int(chosen_modulation_index),
         "modulation": modulation_name,
         "modulation_spectral_efficiency": modulation_efficiency,
         "min_osnr": float(min_osnr),
@@ -690,20 +701,20 @@ def _build_service_row(
         "ase": float(ase),
         "nli": float(nli),
         "disrupted_services": int(disrupted_services),
-        "fragmentation_shannon_entropy": float(info.get("fragmentation_shannon_entropy", 0.0)),
-        "fragmentation_route_cuts": float(info.get("fragmentation_route_cuts", 0.0)),
-        "fragmentation_route_rss": float(info.get("fragmentation_route_rss", 0.0)),
+        "fragmentation_shannon_entropy": _as_float(info.get("fragmentation_shannon_entropy", 0.0)),
+        "fragmentation_route_cuts": _as_float(info.get("fragmentation_route_cuts", 0.0)),
+        "fragmentation_route_rss": _as_float(info.get("fragmentation_route_rss", 0.0)),
     }
 
 
 def _build_standard_summary_rows(episode_rows: list[dict[str, object]], report_utils) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
-    keys = sorted({(str(row["policy"]), float(row["sweep_value"])) for row in episode_rows})
+    keys = sorted({(str(row["policy"]), _as_float(row["sweep_value"])) for row in episode_rows})
     for policy, value in keys:
         value_rows = [
             row
             for row in episode_rows
-            if str(row["policy"]) == policy and float(row["sweep_value"]) == value
+            if str(row["policy"]) == policy and _as_float(row["sweep_value"]) == value
         ]
         first = value_rows[0]
         row = {
@@ -713,10 +724,10 @@ def _build_standard_summary_rows(episode_rows: list[dict[str, object]], report_u
             "sweep_name": first["sweep_name"],
             "sweep_value": float(value),
             "episodes": len(value_rows),
-            "requests_per_episode": int(first["requests_per_episode"]),
-            "load": float(first["load"]),
-            "margin": float(first["margin"]),
-            "launch_power_dbm": float(first["launch_power_dbm"]),
+            "requests_per_episode": _as_int(first["requests_per_episode"]),
+            "load": _as_float(first["load"]),
+            "margin": _as_float(first["margin"]),
+            "launch_power_dbm": _as_float(first["launch_power_dbm"]),
         }
         row.update(report_utils.aggregate_summary_metrics(value_rows, metric_names=STANDARD_SUMMARY_METRIC_NAMES))
         rows.append(row)
@@ -738,8 +749,8 @@ def compare_summary_rows(
             raise ValueError(f"candidate summary is missing key {key!r}")
         candidate_row = candidate_by_key[key]
         for metric, tolerance in metric_tolerances.items():
-            reference_value = float(reference_row[metric])
-            candidate_value = float(candidate_row[metric])
+            reference_value = _as_float(reference_row[metric])
+            candidate_value = _as_float(candidate_row[metric])
             absolute_delta = abs(reference_value - candidate_value)
             results.append(
                 ComparisonResult(

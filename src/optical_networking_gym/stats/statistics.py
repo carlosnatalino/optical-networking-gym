@@ -35,7 +35,7 @@ class Statistics:
         self._episode_modulation_histogram = {
             spectral_efficiency: 0 for spectral_efficiency in self._configured_spectral_efficiencies
         }
-        self._episode_modulation_histogram_cache = tuple(
+        self._episode_modulation_histogram_cache: tuple[tuple[int, int], ...] | None = tuple(
             (spectral_efficiency, 0) for spectral_efficiency in self._configured_spectral_efficiencies
         )
 
