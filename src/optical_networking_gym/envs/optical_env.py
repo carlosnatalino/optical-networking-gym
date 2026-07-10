@@ -43,6 +43,9 @@ class OpticalEnv(gym.Env):
         )
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
+        # Seed gymnasium's np_random alongside the simulator's own RNG so the
+        # env satisfies the Gymnasium API contract (check_env).
+        super().reset(seed=seed)
         return self.simulator.reset(seed=seed, options=options)
 
     def step(self, action: int):

@@ -112,3 +112,13 @@ def test_optical_env_can_hide_mask_from_info_but_keep_action_masks() -> None:
 
     assert info["mask"] is None
     assert env.action_masks() is not None
+
+
+def test_optical_env_complies_with_gymnasium_api() -> None:
+    from gymnasium.utils.env_checker import check_env
+
+    from optical_networking_gym import make_env
+
+    env = make_env("nobel-eu", episode_length=10)
+
+    check_env(env, skip_render_check=True)
