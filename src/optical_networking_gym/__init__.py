@@ -24,7 +24,7 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "RequestAnalysis": (".runtime.request_analysis", "RequestAnalysis"),
     "RequestAnalysisEngine": (".runtime.request_analysis", "RequestAnalysisEngine"),
     "RewardBreakdown": (".contracts.reward", "RewardBreakdown"),
-    "RewardFunction": (".rl.reward_function", "RewardFunction"),
+    "RewardFunction": (".features.reward_function", "RewardFunction"),
     "RewardInput": (".contracts.reward", "RewardInput"),
     "RewardProfile": (".contracts.enums", "RewardProfile"),
     "RuntimeHeuristicContext": (".heuristics.runtime_heuristics", "RuntimeHeuristicContext"),

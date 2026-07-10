@@ -5,7 +5,7 @@ from typing import Any, Mapping
 
 from optical_networking_gym.config.scenario import ScenarioConfig
 from optical_networking_gym.contracts.enums import MaskMode, RewardProfile, TrafficMode
-from optical_networking_gym.config.defaults import get_modulations, resolve_topology, set_topology_dir
+from optical_networking_gym.defaults import get_modulations, resolve_topology, set_topology_dir
 from optical_networking_gym.envs.optical_env import OpticalEnv
 from optical_networking_gym.network.topology import TopologyModel
 from optical_networking_gym.scenarios import build_scenario

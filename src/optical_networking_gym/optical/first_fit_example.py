@@ -4,8 +4,8 @@ from collections import Counter
 import json
 from pathlib import Path
 
-from optical_networking_gym.factory import make_env
-from optical_networking_gym.heuristics.first_fit import select_first_fit_action
+from optical_networking_gym.api.factory import make_env
+from optical_networking_gym.heuristics.masked_heuristics import select_first_fit_action
 
 
 PACKAGE_PROJECT_ROOT = Path(__file__).resolve().parents[3]

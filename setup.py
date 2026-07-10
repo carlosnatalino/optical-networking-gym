@@ -17,8 +17,8 @@ extensions = [
         include_dirs=[numpy.get_include()],
     ),
     Extension(
-        "optical_networking_gym.simulation._request_analysis_kernels",
-        ["src/optical_networking_gym/simulation/_request_analysis_kernels.pyx"],
+        "optical_networking_gym.runtime._request_analysis_kernels",
+        ["src/optical_networking_gym/runtime/_request_analysis_kernels.pyx"],
         include_dirs=[numpy.get_include()],
     ),
 ]

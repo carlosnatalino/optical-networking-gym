@@ -16,7 +16,7 @@ from optical_networking_gym.features.observation import Observation
 from optical_networking_gym.instrumentation.traces import write_step_trace_jsonl
 from optical_networking_gym.network.topology import TopologyModel
 from optical_networking_gym.optical.qot_engine import QoTEngine
-from optical_networking_gym.rl.reward_function import RewardFunction
+from optical_networking_gym.features.reward_function import RewardFunction
 from optical_networking_gym.runtime.action_codec import (
     decode_action,
     reject_action,

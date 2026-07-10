@@ -1,4 +1,4 @@
-from .defaults import MODULATION_CATALOG, get_modulations, resolve_topology, set_topology_dir
+from optical_networking_gym.defaults import MODULATION_CATALOG, get_modulations, resolve_topology, set_topology_dir
 
 from .scenario import ScenarioConfig
 

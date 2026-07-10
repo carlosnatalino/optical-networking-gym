@@ -14,7 +14,7 @@ from optical_networking_gym.optical.kernels.allocation_kernel import candidate_s
 from optical_networking_gym.optical.qot_engine import QoTEngine
 
 try:
-    from optical_networking_gym.simulation import _request_analysis_kernels as _request_analysis_kernels_module
+    from optical_networking_gym.runtime import _request_analysis_kernels as _request_analysis_kernels_module
 except ImportError:
     _request_analysis_kernels_module = None
 

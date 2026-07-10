@@ -5,6 +5,7 @@ from importlib import import_module
 _EXPORTS = {
     "ActionMask": (".action_mask", "ActionMask"),
     "Observation": (".observation", "Observation"),
+    "RewardFunction": (".reward_function", "RewardFunction"),
 }
 
 __all__ = list(_EXPORTS)
