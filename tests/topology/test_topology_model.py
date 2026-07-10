@@ -4,11 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from optical_networking_gym_v2 import TopologyModel
+from optical_networking_gym import TopologyModel
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-RING_4_PATH = PROJECT_ROOT / "src" / "optical_networking_gym_v2" / "topologies" / "ring_4.txt"
+RING_4_PATH = PROJECT_ROOT / "src" / "optical_networking_gym" / "topologies" / "ring_4.txt"
 
 
 def test_topology_model_builds_ring4_from_file() -> None:

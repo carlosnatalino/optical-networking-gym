@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from optical_networking_gym_v2 import OpticalEnv, ScenarioConfig, get_modulations, make_env
+from optical_networking_gym import OpticalEnv, ScenarioConfig, get_modulations, make_env
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-TOPOLOGY_DIR = PROJECT_ROOT / "src" / "optical_networking_gym_v2" / "topologies"
+TOPOLOGY_DIR = PROJECT_ROOT / "src" / "optical_networking_gym" / "topologies"
 
 
 def test_make_env_builds_optical_env_with_dynamic_defaults() -> None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from optical_networking_gym_v2 import (
+from optical_networking_gym import (
     Allocation,
     Modulation,
     RewardBreakdown,

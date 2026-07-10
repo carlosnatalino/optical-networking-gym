@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from optical_networking_gym_v2 import TrafficRecord, TrafficTable
-from optical_networking_gym_v2.network import read_traffic_table_jsonl, write_traffic_table_jsonl
+from optical_networking_gym import TrafficRecord, TrafficTable
+from optical_networking_gym.network import read_traffic_table_jsonl, write_traffic_table_jsonl
 
 
 def _table() -> TrafficTable:

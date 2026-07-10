@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from optical_networking_gym_v2.bench import benchmark_statistics_step_info
+from optical_networking_gym.bench import benchmark_statistics_step_info
 
 
 def test_statistics_step_info_benchmark_returns_expected_keys() -> None:

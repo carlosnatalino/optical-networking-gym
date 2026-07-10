@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from optical_networking_gym_v2 import (
+from optical_networking_gym import (
     Modulation,
     OpticalEnv,
     ScenarioConfig,
@@ -17,7 +17,7 @@ from optical_networking_gym_v2 import (
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-RING_4_PATH = PROJECT_ROOT / "src" / "optical_networking_gym_v2" / "topologies" / "ring_4.txt"
+RING_4_PATH = PROJECT_ROOT / "src" / "optical_networking_gym" / "topologies" / "ring_4.txt"
 
 
 def _topology() -> TopologyModel:
@@ -112,3 +112,13 @@ def test_optical_env_can_hide_mask_from_info_but_keep_action_masks() -> None:
 
     assert info["mask"] is None
     assert env.action_masks() is not None
+
+
+def test_optical_env_complies_with_gymnasium_api() -> None:
+    from gymnasium.utils.env_checker import check_env
+
+    from optical_networking_gym import make_env
+
+    env = make_env("nobel-eu", episode_length=10)
+
+    check_env(env, skip_render_check=True)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from optical_networking_gym_v2.bench import (
+from optical_networking_gym.bench import (
     benchmark_action_mask,
     benchmark_allocation,
     benchmark_observation,

@@ -10,15 +10,15 @@ import sys
 import time
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SRC_DIR = REPO_ROOT / "optical_networking_gym_v2" / "src"
+SRC_DIR = REPO_ROOT / "optical_networking_gym" / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from optical_networking_gym_v2 import ScenarioConfig, make_env
-from optical_networking_gym_v2.defaults import DEFAULT_MEAN_HOLDING_TIME, DEFAULT_NUM_SPECTRUM_RESOURCES, DEFAULT_SEED
-import optical_networking_gym_v2.utils.experiment_scenarios as scenario_utils
-import optical_networking_gym_v2.utils.experiment_utils as sweep_utils
-import optical_networking_gym_v2.utils.sweep_reporting as report_utils
+from optical_networking_gym import ScenarioConfig, make_env
+from optical_networking_gym.defaults import DEFAULT_MEAN_HOLDING_TIME, DEFAULT_NUM_SPECTRUM_RESOURCES, DEFAULT_SEED
+import optical_networking_gym.utils.experiment_scenarios as scenario_utils
+import optical_networking_gym.utils.experiment_utils as sweep_utils
+import optical_networking_gym.utils.sweep_reporting as report_utils
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent

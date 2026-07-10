@@ -5,11 +5,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from optical_networking_gym_v2 import Modulation, QoTEngine, RequestAnalysisEngine, RuntimeState, ScenarioConfig, ServiceRequest, TopologyModel
+from optical_networking_gym import Modulation, QoTEngine, RequestAnalysisEngine, RuntimeState, ScenarioConfig, ServiceRequest, TopologyModel
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-RING_4_PATH = PROJECT_ROOT / "src" / "optical_networking_gym_v2" / "topologies" / "ring_4.txt"
+RING_4_PATH = PROJECT_ROOT / "src" / "optical_networking_gym" / "topologies" / "ring_4.txt"
 
 
 def _topology() -> TopologyModel:

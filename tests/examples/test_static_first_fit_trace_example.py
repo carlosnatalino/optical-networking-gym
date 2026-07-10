@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
-from optical_networking_gym_v2 import TrafficRecord, TrafficTable, write_traffic_table_jsonl
+from optical_networking_gym import TrafficRecord, TrafficTable, write_traffic_table_jsonl
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from optical_networking_gym_v2.api import make_env
-from optical_networking_gym_v2.config import MODULATION_CATALOG, ScenarioConfig, get_modulations
-from optical_networking_gym_v2.features import ActionMask, Observation
-from optical_networking_gym_v2.runtime import (
+from optical_networking_gym.api import make_env
+from optical_networking_gym.config import MODULATION_CATALOG, ScenarioConfig, get_modulations
+from optical_networking_gym.features import ActionMask, Observation
+from optical_networking_gym.runtime import (
     RequestAnalysis,
     RequestAnalysisEngine,
     RuntimeState,

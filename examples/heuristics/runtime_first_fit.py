@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from optical_networking_gym_v2 import make_env
-from optical_networking_gym_v2.defaults import (
+from optical_networking_gym import make_env
+from optical_networking_gym.defaults import (
     DEFAULT_K_PATHS,
     DEFAULT_LAUNCH_POWER_DBM,
     DEFAULT_LOAD,
@@ -10,8 +10,8 @@ from optical_networking_gym_v2.defaults import (
     DEFAULT_NUM_SPECTRUM_RESOURCES,
     DEFAULT_SEED,
 )
-from optical_networking_gym_v2.heuristics.runtime_heuristics import select_first_fit_action
-from optical_networking_gym_v2.utils import experiment_scenarios as scenario_utils
+from optical_networking_gym.heuristics.runtime_heuristics import select_first_fit_action
+from optical_networking_gym.utils import experiment_scenarios as scenario_utils
 
 
 def run_episode(seed: int = DEFAULT_SEED) -> dict[str, float | int | str]:

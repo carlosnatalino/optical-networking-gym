@@ -3,22 +3,62 @@ requires = ["setuptools>=68", "wheel", "Cython>=3.0", "numpy"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "optical-networking-gym-v2"
-version = "0.1.0"
-description = "Incremental v2 rewrite of the optical networking gym"
+name = "optical-networking-gym"
+version = "0.2.0"
+description = "An Open-Source Toolkit for Benchmarking Resource Assignment Problems in Optical Networks"
 readme = "README.md"
 requires-python = ">=3.11"
+authors = [
+    {name = "Carlos Natalino", email = "carlos.natalino@chalmers.se"},
+]
+license = {text = "GPLv3"}
+keywords = ["optical networking", "reinforcement learning", "gym"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+]
 dependencies = ["gymnasium", "networkx", "numpy"]
 
 [project.optional-dependencies]
-dev = ["pytest", "Cython>=3.0"]
+dev = ["pytest", "coverage[toml]", "mypy", "ruff", "Cython>=3.0", "setuptools"]
+research = ["matplotlib", "jupyterlab", "pandas"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-optical_networking_gym_v2 = ["topologies/*.xml", "topologies/*.txt"]
+optical_networking_gym = ["topologies/*.xml", "topologies/*.txt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--import-mode=importlib"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+exclude = ["build", ".venv", "docs"]
+
+[tool.ruff.lint.per-file-ignores]
+"examples/*" = ["E402"]
+"benchmarks/*" = ["E402"]
+
+[tool.mypy]
+files = ["src"]
+# numpy >= 2.5 ships PEP 695 "type" statements in its stubs, which mypy only
+# accepts when analysing as Python >= 3.12. Runtime support stays >= 3.11.
+python_version = "3.12"
+ignore_missing_imports = true
+check_untyped_defs = true
+
+[tool.coverage.run]
+source = ["optical_networking_gym"]
+omit = [
+    # Pure-Python fallback twins of the Cython kernels. They execute only when
+    # the compiled extensions are unavailable; CI always builds the extensions,
+    # so these files are unreachable by design in the measured configuration.
+    "*/optical_networking_gym/optical/kernels/allocation_kernel.py",
+    "*/optical_networking_gym/optical/kernels/qot_kernel.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 78

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from optical_networking_gym_v2 import Modulation, QoTResult, ServiceQoTUpdate
+from optical_networking_gym import Modulation, QoTResult, ServiceQoTUpdate
 
 
 def test_modulation_validates_spectral_efficiency() -> None:

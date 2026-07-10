@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from optical_networking_gym_v2 import Allocation, Status
+from optical_networking_gym import Allocation, Status
 
 
 def test_accept_decision_factory_populates_selection_fields() -> None:

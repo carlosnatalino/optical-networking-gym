@@ -8,7 +8,7 @@ import runpy
 import tomllib
 
 import pytest
-from optical_networking_gym_v2.utils import Parallelism, SimulationUtils, compare_summary_rows
+from optical_networking_gym.utils import Parallelism, SimulationUtils, compare_summary_rows
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -39,17 +39,15 @@ def test_topology_assets_are_declared_as_package_data() -> None:
     data = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))
 
     package_data = data["tool"]["setuptools"]["package-data"]
-    assert "optical_networking_gym_v2" in package_data
-    assert "topologies/*.xml" in package_data["optical_networking_gym_v2"]
-    assert "topologies/*.txt" in package_data["optical_networking_gym_v2"]
+    assert "optical_networking_gym" in package_data
+    assert "topologies/*.xml" in package_data["optical_networking_gym"]
+    assert "topologies/*.txt" in package_data["optical_networking_gym"]
 
 
 def test_jocn_scripts_do_not_import_root_package() -> None:
     for script_name in ("graph_load.py", "graph_margin.py", "graph_launch_power.py"):
         source = (EXAMPLE_DIR / script_name).read_text(encoding="utf-8")
 
-        assert "from optical_networking_gym " not in source
-        assert "import optical_networking_gym " not in source
         assert "optical_networking_gym.wrappers" not in source
         assert "sys.path" not in source
 
