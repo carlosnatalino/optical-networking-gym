@@ -7,18 +7,18 @@ from setuptools import Extension, setup
 
 extensions = [
     Extension(
-        "optical_networking_gym_v2.optical.kernels.allocation_kernel",
-        ["src/optical_networking_gym_v2/optical/kernels/allocation_kernel.pyx"],
+        "optical_networking_gym.optical.kernels.allocation_kernel",
+        ["src/optical_networking_gym/optical/kernels/allocation_kernel.pyx"],
         include_dirs=[numpy.get_include()],
     ),
     Extension(
-        "optical_networking_gym_v2.optical.kernels.qot_kernel",
-        ["src/optical_networking_gym_v2/optical/kernels/qot_kernel.pyx"],
+        "optical_networking_gym.optical.kernels.qot_kernel",
+        ["src/optical_networking_gym/optical/kernels/qot_kernel.pyx"],
         include_dirs=[numpy.get_include()],
     ),
     Extension(
-        "optical_networking_gym_v2.simulation._request_analysis_kernels",
-        ["src/optical_networking_gym_v2/simulation/_request_analysis_kernels.pyx"],
+        "optical_networking_gym.simulation._request_analysis_kernels",
+        ["src/optical_networking_gym/simulation/_request_analysis_kernels.pyx"],
         include_dirs=[numpy.get_include()],
     ),
 ]

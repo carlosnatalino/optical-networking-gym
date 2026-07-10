@@ -4,8 +4,8 @@ from pathlib import Path
 
 import numpy as np
 
-from optical_networking_gym_v2 import BUILTIN_TOPOLOGY_DIR, make_env, set_topology_dir
-from optical_networking_gym_v2.heuristics.masked_heuristics import select_random_action
+from optical_networking_gym import BUILTIN_TOPOLOGY_DIR, make_env, set_topology_dir
+from optical_networking_gym.heuristics.masked_heuristics import select_random_action
 
 
 TOPOLOGY_DIR = BUILTIN_TOPOLOGY_DIR

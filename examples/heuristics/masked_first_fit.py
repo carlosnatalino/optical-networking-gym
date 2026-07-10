@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from optical_networking_gym_v2 import BUILTIN_TOPOLOGY_DIR, ScenarioConfig, make_env
-from optical_networking_gym_v2.heuristics.masked_heuristics import select_first_fit_action
-from optical_networking_gym_v2.utils import build_nobel_eu_ofc_v1_scenario
+from optical_networking_gym import BUILTIN_TOPOLOGY_DIR, ScenarioConfig, make_env
+from optical_networking_gym.heuristics.masked_heuristics import select_first_fit_action
+from optical_networking_gym.utils import build_nobel_eu_ofc_v1_scenario
 
 
 TOPOLOGY_DIR = BUILTIN_TOPOLOGY_DIR

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from optical_networking_gym_v2 import BUILTIN_TOPOLOGY_DIR, make_env, set_topology_dir
-from optical_networking_gym_v2.heuristics import (
+from optical_networking_gym import BUILTIN_TOPOLOGY_DIR, make_env, set_topology_dir
+from optical_networking_gym.heuristics import (
     build_runtime_heuristic_context,
     select_disruption_aware_first_fit_action,
     select_first_fit_action,
@@ -18,10 +18,10 @@ from optical_networking_gym_v2.heuristics import (
     select_random_action,
     select_random_runtime_action,
 )
-from optical_networking_gym_v2.heuristics import runtime_heuristics as runtime_heuristics_module
-from optical_networking_gym_v2.runtime.action_codec import encode_action
-from optical_networking_gym_v2.runtime.request_analysis import PATH_FEATURE_NAMES, PATH_SLOT_FEATURE_NAMES
-from optical_networking_gym_v2.optical.first_fit import (
+from optical_networking_gym.heuristics import runtime_heuristics as runtime_heuristics_module
+from optical_networking_gym.runtime.action_codec import encode_action
+from optical_networking_gym.runtime.request_analysis import PATH_FEATURE_NAMES, PATH_SLOT_FEATURE_NAMES
+from optical_networking_gym.optical.first_fit import (
     shortest_available_path_first_fit_best_modulation,
 )
 TOPOLOGY_DIR = BUILTIN_TOPOLOGY_DIR

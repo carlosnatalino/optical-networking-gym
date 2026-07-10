@@ -11,7 +11,7 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from optical_networking_gym_v2.bench.integrated_benchmarking import (
+from optical_networking_gym.bench.integrated_benchmarking import (
     benchmark_simulator_episode,
     profile_simulator_episode,
 )

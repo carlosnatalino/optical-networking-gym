@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-from optical_networking_gym_v2 import BUILTIN_TOPOLOGY_DIR, make_env, select_first_fit_action, set_topology_dir
+from optical_networking_gym import BUILTIN_TOPOLOGY_DIR, make_env, select_first_fit_action, set_topology_dir
 
 
 TOPOLOGY_DIR = BUILTIN_TOPOLOGY_DIR

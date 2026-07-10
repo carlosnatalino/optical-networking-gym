@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from optical_networking_gym_v2 import (
+from optical_networking_gym import (
     ScenarioConfig,
     TopologyModel,
     TrafficModel,
@@ -12,11 +12,11 @@ from optical_networking_gym_v2 import (
     TrafficRecord,
     TrafficTable,
 )
-from optical_networking_gym_v2.network import write_traffic_table_jsonl
+from optical_networking_gym.network import write_traffic_table_jsonl
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-RING_4_PATH = PROJECT_ROOT / "src" / "optical_networking_gym_v2" / "topologies" / "ring_4.txt"
+RING_4_PATH = PROJECT_ROOT / "src" / "optical_networking_gym" / "topologies" / "ring_4.txt"
 
 
 def _ring_4_topology() -> TopologyModel:

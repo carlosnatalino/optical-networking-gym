@@ -5,7 +5,7 @@ import math
 import numpy as np
 import pytest
 
-from optical_networking_gym_v2.simulation.request_analysis import (
+from optical_networking_gym.simulation.request_analysis import (
     _analyze_free_mask,
     _fragmentation_damage_by_candidates,
     _summary_after_allocation,

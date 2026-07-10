@@ -4,11 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from optical_networking_gym_v2 import MODULATION_CATALOG, get_modulations, resolve_topology, set_topology_dir
+from optical_networking_gym import MODULATION_CATALOG, get_modulations, resolve_topology, set_topology_dir
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-TOPOLOGY_DIR = PROJECT_ROOT / "src" / "optical_networking_gym_v2" / "topologies"
+TOPOLOGY_DIR = PROJECT_ROOT / "src" / "optical_networking_gym" / "topologies"
 
 
 def test_get_modulations_parses_catalog_names() -> None:

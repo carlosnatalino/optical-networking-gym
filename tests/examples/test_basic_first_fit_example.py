@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from optical_networking_gym_v2 import BUILTIN_TOPOLOGY_DIR, set_topology_dir
-from optical_networking_gym_v2.optical.first_fit_example import run_episode
+from optical_networking_gym import BUILTIN_TOPOLOGY_DIR, set_topology_dir
+from optical_networking_gym.optical.first_fit_example import run_episode
 
 
 TOPOLOGY_DIR = BUILTIN_TOPOLOGY_DIR

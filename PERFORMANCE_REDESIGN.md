@@ -110,8 +110,8 @@ Esta é a mudança que vai fazer o v2 superar o v1. Estimativa: **reduzir de ~16
 ```python
 # setup.py - adicionar
 Extension(
-    "optical_networking_gym_v2.simulation.request_analysis",
-    ["src/optical_networking_gym_v2/simulation/request_analysis.pyx"],
+    "optical_networking_gym.simulation.request_analysis",
+    ["src/optical_networking_gym/simulation/request_analysis.pyx"],
     include_dirs=[np.get_include()],
 )
 ```
@@ -412,8 +412,8 @@ Manter o flow como está (observação no step), mas garantir que `_build_analys
 ```python
 # Adicionar ao setup.py do v2:
 Extension(
-    "optical_networking_gym_v2.simulation.request_analysis",
-    ["src/optical_networking_gym_v2/simulation/request_analysis.pyx"],
+    "optical_networking_gym.simulation.request_analysis",
+    ["src/optical_networking_gym/simulation/request_analysis.pyx"],
     include_dirs=[np.get_include()],
     define_macros=[("NPY_NO_DEPRECATED_API", "NPY_1_7_API_VERSION")],
 ),
