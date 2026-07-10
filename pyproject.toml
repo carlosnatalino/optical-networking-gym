@@ -51,6 +51,13 @@ check_untyped_defs = true
 
 [tool.coverage.run]
 source = ["optical_networking_gym"]
+omit = [
+    # Pure-Python fallback twins of the Cython kernels. They execute only when
+    # the compiled extensions are unavailable; CI always builds the extensions,
+    # so these files are unreachable by design in the measured configuration.
+    "*/optical_networking_gym/optical/kernels/allocation_kernel.py",
+    "*/optical_networking_gym/optical/kernels/qot_kernel.py",
+]
 
 [tool.coverage.report]
 show_missing = true
