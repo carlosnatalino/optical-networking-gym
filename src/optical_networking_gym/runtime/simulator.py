@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from typing import Any, cast
 
@@ -69,6 +69,12 @@ class Simulator:
         self.steps_completed = 0
         self._disrupted_service_ids: set[int] = set()
         self._captured_trace_steps: list[dict[str, object]] = []
+        # Outcome of the most recent step, and an optional hook called right
+        # after the action is applied, while the state still reflects the
+        # moment of the decision (before time advances to the next request and
+        # expired services are released).
+        self.last_transition: StepTransition | None = None
+        self.post_action_callback: Callable[[StepTransition], None] | None = None
 
     @property
     def total_actions(self) -> int:
@@ -104,6 +110,7 @@ class Simulator:
         self.steps_completed = 0
         self._disrupted_service_ids = set()
         self._captured_trace_steps = []
+        self.last_transition = None
 
         self._prepare_next_request()
         if self.current_observation is None:
@@ -135,6 +142,9 @@ class Simulator:
         self.statistics.record_transition(transition)
         if transition.dropped_qot:
             self.statistics.record_dropped_qot(transition.dropped_qot)
+        self.last_transition = transition
+        if self.post_action_callback is not None:
+            self.post_action_callback(transition)
 
         reward_value, reward_breakdown = self.reward_function.evaluate_transition(
             transition,

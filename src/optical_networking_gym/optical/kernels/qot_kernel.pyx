@@ -413,4 +413,101 @@ def summarize_candidate_starts(
     return meets_threshold, osnr_margin, nli_share, worst_link_nli_share_values
 
 
-__all__ = ["EMPTY_POWER_OFFSETS", "accumulate_link_noise", "summarize_candidate_starts"]
+def path_noise(
+    cnp.ndarray[cnp.int32_t, ndim=1] span_offsets,
+    cnp.ndarray[cnp.float64_t, ndim=1] span_lengths_km,
+    cnp.ndarray[cnp.float64_t, ndim=1] span_attenuation_normalized,
+    cnp.ndarray[cnp.float64_t, ndim=1] span_noise_figure_normalized,
+    cnp.ndarray[cnp.float64_t, ndim=1] span_input_loss,
+    cnp.ndarray[cnp.float64_t, ndim=1] span_output_loss,
+    cnp.ndarray[cnp.float64_t, ndim=2] span_power_offset_db,
+    cnp.ndarray[cnp.int32_t, ndim=1] running_offsets,
+    cnp.ndarray[cnp.int32_t, ndim=1] running_service_ids,
+    cnp.ndarray[cnp.float64_t, ndim=1] running_center_frequencies,
+    cnp.ndarray[cnp.float64_t, ndim=1] running_bandwidths,
+    cnp.ndarray[cnp.float64_t, ndim=1] running_phi_modulation,
+    cnp.ndarray[cnp.float64_t, ndim=1] running_launch_powers,
+    *,
+    int current_service_id,
+    double center_frequency,
+    double bandwidth,
+    double launch_power,
+    bint include_nli,
+    double frequency_start,
+    double frequency_slot_bandwidth,
+    bint interferer_psd_actual,
+    double nli_scale=1.0,
+    double extra_nsr=0.0,
+):
+    """Per-link and path-total NSR of one channel on one path (see ``qot_kernel.py``)."""
+    cdef Py_ssize_t link_count = span_offsets.shape[0] - 1
+    cdef Py_ssize_t link_pos
+    cdef double gsnr
+    cdef double ase
+    cdef double nli
+    cdef double share
+    cdef double acc_gsnr = 0.0
+    cdef double acc_ase = 0.0
+    cdef double acc_nli = 0.0
+    cdef double acc_nli_raw = 0.0
+    cdef double worst_link_nli_share = 0.0
+    cdef cnp.ndarray[cnp.float64_t, ndim=1] link_gsnr = np.zeros(link_count, dtype=np.float64)
+    cdef cnp.ndarray[cnp.float64_t, ndim=1] link_ase = np.zeros(link_count, dtype=np.float64)
+    cdef cnp.ndarray[cnp.float64_t, ndim=1] link_nli = np.zeros(link_count, dtype=np.float64)
+    cdef const cnp.int32_t[:] span_offsets_view = span_offsets
+    cdef const cnp.int32_t[:] running_offsets_view = running_offsets
+
+    for link_pos in range(link_count):
+        _accumulate_link_noise_impl(
+            span_lengths_km,
+            span_offsets_view[link_pos],
+            span_offsets_view[link_pos + 1],
+            span_attenuation_normalized,
+            span_noise_figure_normalized,
+            span_input_loss,
+            span_output_loss,
+            span_power_offset_db,
+            running_service_ids,
+            running_offsets_view[link_pos],
+            running_offsets_view[link_pos + 1],
+            running_center_frequencies,
+            running_bandwidths,
+            running_phi_modulation,
+            running_launch_powers,
+            current_service_id,
+            center_frequency,
+            bandwidth,
+            launch_power,
+            include_nli,
+            frequency_start,
+            frequency_slot_bandwidth,
+            interferer_psd_actual,
+            &gsnr,
+            &ase,
+            &nli,
+        )
+        link_gsnr[link_pos] = gsnr
+        link_ase[link_pos] = ase
+        link_nli[link_pos] = nli
+        acc_gsnr += gsnr
+        acc_ase += ase
+        acc_nli += nli
+        acc_nli_raw += gsnr - ase
+        if nli > 0.0 or ase > 0.0:
+            share = nli / (ase + nli)
+            if share > worst_link_nli_share:
+                worst_link_nli_share = share
+
+    if nli_scale != 1.0:
+        acc_gsnr += (nli_scale - 1.0) * acc_nli_raw
+        acc_nli *= nli_scale
+    acc_gsnr += extra_nsr
+    return link_gsnr, link_ase, link_nli, acc_gsnr, acc_ase, acc_nli, worst_link_nli_share
+
+
+__all__ = [
+    "EMPTY_POWER_OFFSETS",
+    "accumulate_link_noise",
+    "path_noise",
+    "summarize_candidate_starts",
+]

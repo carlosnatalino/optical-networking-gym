@@ -389,7 +389,108 @@ def summarize_candidate_starts(
     return meets_threshold, osnr_margin, nli_share, worst_link_nli_share_values
 
 
-__all__ = ["EMPTY_POWER_OFFSETS", "accumulate_link_noise", "summarize_candidate_starts"]
+def path_noise(
+    span_offsets: np.ndarray,
+    span_lengths_km: np.ndarray,
+    span_attenuation_normalized: np.ndarray,
+    span_noise_figure_normalized: np.ndarray,
+    span_input_loss: np.ndarray,
+    span_output_loss: np.ndarray,
+    span_power_offset_db: np.ndarray,
+    running_offsets: np.ndarray,
+    running_service_ids: np.ndarray,
+    running_center_frequencies: np.ndarray,
+    running_bandwidths: np.ndarray,
+    running_phi_modulation: np.ndarray,
+    running_launch_powers: np.ndarray,
+    *,
+    current_service_id: int,
+    center_frequency: float,
+    bandwidth: float,
+    launch_power: float,
+    include_nli: bool,
+    frequency_start: float,
+    frequency_slot_bandwidth: float,
+    interferer_psd_actual: bool,
+    nli_scale: float = 1.0,
+    extra_nsr: float = 0.0,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float, float, float]:
+    """Per-link and path-total NSR of one channel on one path.
+
+    Same physics and inputs as :func:`summarize_candidate_starts` (all links of
+    the path concatenated, ``span_offsets``/``running_offsets`` delimiting each
+    link), for a single channel.
+
+    Returns:
+        ``(link_nsr_total, link_nsr_ase, link_nsr_nli, path_nsr_total,
+        path_nsr_ase, path_nsr_nli, worst_link_nli_share)``. Per-link values are
+        incoherent; the path NLI and total include the coherence scale and the
+        path total includes ``extra_nsr``.
+    """
+    offsets_arr = np.asarray(span_offsets, dtype=np.int32)
+    running_offsets_arr = np.asarray(running_offsets, dtype=np.int32)
+    link_count = max(0, offsets_arr.shape[0] - 1)
+    link_gsnr = np.zeros(link_count, dtype=np.float64)
+    link_ase = np.zeros(link_count, dtype=np.float64)
+    link_nli = np.zeros(link_count, dtype=np.float64)
+    offsets = np.asarray(span_power_offset_db, dtype=np.float64)
+    if offsets.ndim != 2:
+        offsets = EMPTY_POWER_OFFSETS
+    acc_gsnr = 0.0
+    acc_ase = 0.0
+    acc_nli = 0.0
+    acc_nli_raw = 0.0
+    worst_link_nli_share = 0.0
+    for link_pos in range(link_count):
+        gsnr, ase, nli = _accumulate_spans(
+            int(offsets_arr[link_pos]),
+            int(offsets_arr[link_pos + 1]),
+            np.asarray(span_lengths_km, dtype=np.float64),
+            np.asarray(span_attenuation_normalized, dtype=np.float64),
+            np.asarray(span_noise_figure_normalized, dtype=np.float64),
+            np.asarray(span_input_loss, dtype=np.float64),
+            np.asarray(span_output_loss, dtype=np.float64),
+            offsets,
+            int(running_offsets_arr[link_pos]),
+            int(running_offsets_arr[link_pos + 1]),
+            np.asarray(running_service_ids, dtype=np.int32),
+            np.asarray(running_center_frequencies, dtype=np.float64),
+            np.asarray(running_bandwidths, dtype=np.float64),
+            np.asarray(running_phi_modulation, dtype=np.float64),
+            np.asarray(running_launch_powers, dtype=np.float64),
+            current_service_id,
+            center_frequency,
+            bandwidth,
+            launch_power,
+            include_nli,
+            frequency_start,
+            frequency_slot_bandwidth,
+            interferer_psd_actual,
+        )
+        link_gsnr[link_pos] = gsnr
+        link_ase[link_pos] = ase
+        link_nli[link_pos] = nli
+        acc_gsnr += gsnr
+        acc_ase += ase
+        acc_nli += nli
+        acc_nli_raw += gsnr - ase
+        if nli > 0.0 or ase > 0.0:
+            share = nli / (ase + nli)
+            if share > worst_link_nli_share:
+                worst_link_nli_share = share
+    if nli_scale != 1.0:
+        acc_gsnr += (nli_scale - 1.0) * acc_nli_raw
+        acc_nli *= nli_scale
+    acc_gsnr += extra_nsr
+    return link_gsnr, link_ase, link_nli, acc_gsnr, acc_ase, acc_nli, worst_link_nli_share
+
+
+__all__ = [
+    "EMPTY_POWER_OFFSETS",
+    "accumulate_link_noise",
+    "path_noise",
+    "summarize_candidate_starts",
+]
 
 # References
 # [Poggiolini_2014_GNModelFiberNonLinear] P. Poggiolini, G. Bosco, A. Carena, V. Curri,

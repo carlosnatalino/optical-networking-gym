@@ -14,9 +14,10 @@ if TYPE_CHECKING:
     )
     from .first_fit_example import run_episode as run_first_fit_episode
     from .kernels import accumulate_link_noise, block_is_free, candidate_starts_array, fill_range
-    from .qot_engine import QoTEngine
+    from .qot_engine import LightpathNoiseBreakdown, QoTEngine
 
 _EXPORTS: dict[str, tuple[str, str]] = {
+    "LightpathNoiseBreakdown": (".qot_engine", "LightpathNoiseBreakdown"),
     "QoTEngine": (".qot_engine", "QoTEngine"),
     "accumulate_link_noise": (".kernels", "accumulate_link_noise"),
     "block_is_free": (".kernels", "block_is_free"),
@@ -28,6 +29,7 @@ _EXPORTS: dict[str, tuple[str, str]] = {
 }
 
 __all__ = [
+    "LightpathNoiseBreakdown",
     "QoTEngine",
     "accumulate_link_noise",
     "block_is_free",

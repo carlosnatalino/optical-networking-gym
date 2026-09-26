@@ -12,7 +12,7 @@ from optical_networking_gym.contracts import (
     ServiceQoTUpdate,
     ServiceRequest,
 )
-from .kernels.qot_kernel import accumulate_link_noise, summarize_candidate_starts
+from .kernels.qot_kernel import path_noise, summarize_candidate_starts
 from optical_networking_gym.runtime.runtime_state import RuntimeState
 from optical_networking_gym.network.topology import PathRecord, Span, TopologyModel
 from optical_networking_gym.config.scenario import ScenarioConfig
@@ -21,6 +21,10 @@ from optical_networking_gym.config.scenario import ScenarioConfig
 def dbm_to_watt(power_dbm: float) -> float:
     """Convert a power in dBm to watts."""
     return float(10 ** ((power_dbm - 30.0) / 10.0))
+
+
+def _osnr_db_to_nsr(osnr_db: float | None) -> float:
+    return 0.0 if osnr_db is None else float(10 ** (-osnr_db / 10.0))
 
 
 _PHI_MODULATION_BY_SE = {
@@ -84,6 +88,48 @@ class QoTCandidateSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class LightpathNoiseBreakdown:
+    """Noise-to-signal ratios (linear) of one lightpath, per network element.
+
+    The GSNR is ``-10 log10(total_nsr)`` with
+    ``total_nsr = sum(link_ase_nsr) + sum(link_nli_nsr) + coherent_excess_nsr
+    + roadm_add_nsr + roadm_express_nsr + roadm_drop_nsr + transceiver_nsr``.
+    (With the EGN correction a link's raw NLI can be slightly negative; the
+    per-link NLI reported here is clipped at 0 and the difference is kept in
+    ``nli_correction_nsr`` so the sum stays exact.)
+
+    Attributes:
+        link_ids: Links of the path, in order.
+        link_ase_nsr: ASE contribution of each link (incoherent sum of spans).
+        link_nli_nsr: NLI contribution of each link (incoherent GN/EGN).
+        coherent_excess_nsr: Extra NLI from coherent accumulation over the path,
+            ``(N_spans**epsilon - 1) * sum(raw link NLI)``.
+        roadm_add_nsr, roadm_drop_nsr: Add and drop ROADM terms.
+        roadm_express_nsr: Sum of the express terms of intermediate nodes.
+        transceiver_nsr: Transceiver (back-to-back) term.
+        nli_correction_nsr: Negative-NLI remainder (see above), usually 0.
+        total_nsr: Path total.
+        n_spans: Number of spans of the path.
+    """
+
+    link_ids: tuple[int, ...]
+    link_ase_nsr: np.ndarray
+    link_nli_nsr: np.ndarray
+    coherent_excess_nsr: float
+    roadm_add_nsr: float
+    roadm_express_nsr: float
+    roadm_drop_nsr: float
+    transceiver_nsr: float
+    nli_correction_nsr: float
+    total_nsr: float
+    n_spans: int
+
+    @property
+    def gsnr_db(self) -> float:
+        return float(10.0 * math.log10(1.0 / self.total_nsr))
+
+
+@dataclass(frozen=True, slots=True)
 class _MetricsSummary:
     osnr: float
     ase: float
@@ -105,7 +151,12 @@ class QoTEngine:
         self.config = config
         self.topology = topology
         self._include_nli = config.qot_constraint == "ASE+NLI"
-        self._include_running_service_interference = bool(config.measure_disruptions)
+        self._include_running_service_interference = (
+            bool(config.measure_disruptions)
+            if config.nli_include_interferers is None
+            else bool(config.nli_include_interferers)
+        )
+        self._path_terms_cache: dict[int, tuple[float, float, float, float, float]] = {}
         self._interferer_psd_actual = config.nli_interferer_psd == "actual"
         self._launch_power = dbm_to_watt(config.launch_power_dbm)
         self._empty_service_ids = np.empty(0, dtype=np.int32)
@@ -161,6 +212,102 @@ class QoTEngine:
             )
             offsets[index + 1] = offsets[index] + ripple
         return offsets
+
+    def _path_terms(self, path: PathRecord) -> tuple[float, float, float, float, float]:
+        """Path constants: (nli_scale, add, express-total, drop, transceiver) NSR.
+
+        ``nli_scale = N_spans**epsilon`` models coherent NLI accumulation, since
+        the NLI of ``N`` identical spans grows as ``N**(1+epsilon)`` instead of
+        ``N`` [Poggiolini_2012_GNModelNonLinear]. Node terms are constant-OSNR
+        contributions, as GNPy's ROADM ``add_drop_osnr`` and transceiver
+        ``tx_osnr`` [Curri_2022_GNPyModelPhysical].
+        """
+        cached = self._path_terms_cache.get(path.id)
+        if cached is not None:
+            return cached
+        config = self.config
+        n_spans = sum(int(self._link_span_lengths_km[link_id].shape[0]) for link_id in path.link_ids)
+        nli_scale = float(n_spans**config.nli_coherence_epsilon) if n_spans > 0 else 1.0
+        n_express = max(len(path.node_names) - 2, 0)
+        terms = (
+            nli_scale,
+            _osnr_db_to_nsr(config.roadm_add_osnr_db),
+            n_express * _osnr_db_to_nsr(config.roadm_express_osnr_db),
+            _osnr_db_to_nsr(config.roadm_drop_osnr_db),
+            _osnr_db_to_nsr(config.transceiver_osnr_db),
+        )
+        self._path_terms_cache[path.id] = terms
+        return terms
+
+    def _path_scale_and_extra(self, path: PathRecord) -> tuple[float, float]:
+        nli_scale, add, express, drop, transceiver = self._path_terms(path)
+        return nli_scale, add + express + drop + transceiver
+
+    def noise_breakdown(
+        self,
+        state: RuntimeState,
+        *,
+        path: PathRecord,
+        service_id: int,
+        center_frequency: float,
+        bandwidth: float,
+        launch_power: float,
+    ) -> LightpathNoiseBreakdown:
+        """Per-element noise breakdown of a channel on a path (Cython kernel)."""
+        prepared = self._prepare_candidate_summary_inputs(state, path)
+        nli_scale, add, express, drop, transceiver = self._path_terms(path)
+        extra = add + express + drop + transceiver
+        link_gsnr, link_ase, link_nli, total, _, _, _ = path_noise(
+            prepared.span_offsets,
+            prepared.span_lengths,
+            prepared.span_attenuation,
+            prepared.span_noise_figure,
+            prepared.span_input_loss,
+            prepared.span_output_loss,
+            prepared.span_power_offset_db,
+            prepared.running_offsets,
+            prepared.running_service_ids,
+            prepared.running_center_frequencies,
+            prepared.running_bandwidths,
+            prepared.running_phi_modulation,
+            prepared.running_launch_powers,
+            current_service_id=service_id,
+            center_frequency=center_frequency,
+            bandwidth=bandwidth,
+            launch_power=launch_power,
+            include_nli=self._include_nli,
+            frequency_start=self.config.frequency_start,
+            frequency_slot_bandwidth=self.config.frequency_slot_bandwidth,
+            interferer_psd_actual=self._interferer_psd_actual,
+            nli_scale=nli_scale,
+            extra_nsr=extra,
+        )
+        raw_nli_total = float(np.sum(link_gsnr - link_ase))
+        return LightpathNoiseBreakdown(
+            link_ids=path.link_ids,
+            link_ase_nsr=link_ase,
+            link_nli_nsr=link_nli,
+            coherent_excess_nsr=(nli_scale - 1.0) * raw_nli_total,
+            roadm_add_nsr=add,
+            roadm_express_nsr=express,
+            roadm_drop_nsr=drop,
+            transceiver_nsr=transceiver,
+            nli_correction_nsr=raw_nli_total - float(np.sum(link_nli)),
+            total_nsr=float(total),
+            n_spans=int(prepared.span_lengths.shape[0]),
+        )
+
+    def service_noise_breakdown(self, state: RuntimeState, service_id: int) -> LightpathNoiseBreakdown:
+        """Noise breakdown of an established service in the current state."""
+        service = state.active_services_by_id[service_id]
+        return self.noise_breakdown(
+            state,
+            path=service.path,
+            service_id=service.service_id,
+            center_frequency=service.center_frequency,
+            bandwidth=service.bandwidth,
+            launch_power=service.launch_power if service.launch_power > 0.0 else self._launch_power,
+        )
 
     def launch_power_for(self, request: ServiceRequest) -> float:
         """Launch power (W) of a request: its own value, else the scenario default."""
@@ -284,6 +431,7 @@ class QoTEngine:
             candidate_starts=candidate_starts,
             threshold=modulation.minimum_osnr + self.config.margin,
             launch_power=launch_power,
+            path=path,
         )
 
     def _prepare_candidate_summary_inputs(
@@ -361,7 +509,9 @@ class QoTEngine:
         candidate_starts: np.ndarray | list[int] | tuple[int, ...],
         threshold: float,
         launch_power: float | None = None,
+        path: PathRecord | None = None,
     ) -> _CandidateBatchSummary:
+        nli_scale, extra_nsr = (1.0, 0.0) if path is None else self._path_scale_and_extra(path)
         starts = np.asarray(candidate_starts, dtype=np.int32)
         if starts.ndim != 1:
             raise ValueError("candidate_starts must be 1D")
@@ -397,6 +547,8 @@ class QoTEngine:
             span_power_offset_db=prepared_inputs.span_power_offset_db,
             running_launch_powers=prepared_inputs.running_launch_powers,
             interferer_psd_actual=self._interferer_psd_actual,
+            nli_scale=nli_scale,
+            extra_nsr=extra_nsr,
         )
         return _CandidateBatchSummary(
             meets_threshold=meets_threshold,
@@ -507,53 +659,33 @@ class QoTEngine:
         launch_power: float,
         state: RuntimeState,
     ) -> _MetricsSummary:
-        acc_gsnr = 0.0
-        acc_ase = 0.0
-        acc_nli = 0.0
-        worst_link_nli_share = 0.0
-
-        for link_id in path.link_ids:
-            if self._include_running_service_interference:
-                running = self._link_running_service_arrays(state, link_id)
-                running_service_ids = running.service_ids
-                running_center_frequencies = running.center_frequencies
-                running_bandwidths = running.bandwidths
-                running_phi_modulation = running.phi_modulation
-                running_launch_powers = running.launch_powers
-            else:
-                running_service_ids = self._empty_service_ids
-                running_center_frequencies = self._empty_float_values
-                running_bandwidths = self._empty_float_values
-                running_phi_modulation = self._empty_float_values
-                running_launch_powers = self._empty_float_values
-            link_acc_gsnr, link_acc_ase, link_acc_nli = accumulate_link_noise(
-                self._link_span_lengths_km[link_id],
-                self._link_span_attenuation_normalized[link_id],
-                self._link_span_noise_figure_normalized[link_id],
-                running_service_ids,
-                running_center_frequencies,
-                running_bandwidths,
-                running_phi_modulation,
-                current_service_id=service_id,
-                center_frequency=center_frequency,
-                bandwidth=bandwidth,
-                launch_power=launch_power,
-                include_nli=self._include_nli,
-                span_input_loss=self._link_span_input_loss[link_id],
-                span_output_loss=self._link_span_output_loss[link_id],
-                span_power_offset_db=self._link_span_power_offset_db[link_id],
-                running_launch_powers=running_launch_powers,
-                frequency_start=self.config.frequency_start,
-                frequency_slot_bandwidth=self.config.frequency_slot_bandwidth,
-                interferer_psd_actual=self._interferer_psd_actual,
-            )
-            acc_gsnr += link_acc_gsnr
-            acc_ase += link_acc_ase
-            acc_nli += link_acc_nli
-            if link_acc_nli > 0.0 or link_acc_ase > 0.0:
-                link_nli_share = link_acc_nli / (link_acc_ase + link_acc_nli)
-                if link_nli_share > worst_link_nli_share:
-                    worst_link_nli_share = link_nli_share
+        prepared = self._prepare_candidate_summary_inputs(state, path)
+        nli_scale, extra_nsr = self._path_scale_and_extra(path)
+        _, _, _, acc_gsnr, acc_ase, acc_nli, worst_link_nli_share = path_noise(
+            prepared.span_offsets,
+            prepared.span_lengths,
+            prepared.span_attenuation,
+            prepared.span_noise_figure,
+            prepared.span_input_loss,
+            prepared.span_output_loss,
+            prepared.span_power_offset_db,
+            prepared.running_offsets,
+            prepared.running_service_ids,
+            prepared.running_center_frequencies,
+            prepared.running_bandwidths,
+            prepared.running_phi_modulation,
+            prepared.running_launch_powers,
+            current_service_id=service_id,
+            center_frequency=center_frequency,
+            bandwidth=bandwidth,
+            launch_power=launch_power,
+            include_nli=self._include_nli,
+            frequency_start=self.config.frequency_start,
+            frequency_slot_bandwidth=self.config.frequency_slot_bandwidth,
+            interferer_psd_actual=self._interferer_psd_actual,
+            nli_scale=nli_scale,
+            extra_nsr=extra_nsr,
+        )
 
         osnr = 10.0 * math.log10(1.0 / acc_gsnr)
         ase = 10.0 * math.log10(1.0 / acc_ase)

@@ -1,15 +1,34 @@
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 
 import gymnasium as gym
 
+from optical_networking_gym.contracts import StepTransition
 from optical_networking_gym.network.topology import TopologyModel
 from optical_networking_gym.config.scenario import ScenarioConfig
 from optical_networking_gym.runtime.simulator import Simulator
 
 
 class OpticalEnv(gym.Env):
+    """Routing, modulation and spectrum assignment (RMSA) environment.
+
+    Extension points for subclasses:
+
+    * :meth:`observation` maps the simulator's flat observation to the
+      observation returned by :meth:`reset` and :meth:`step` (same contract as
+      ``gymnasium.ObservationWrapper.observation``). Subclasses that return a
+      different structure should also set ``self.observation_space``.
+    * :meth:`on_action_applied` is called inside :meth:`step` right after the
+      action is applied, while ``self.simulator.state`` still reflects the
+      moment of the decision (before time advances to the next request and
+      expired services are released). Use it to record quantities that are only
+      meaningful at that instant, e.g. the state seen by a newly established
+      lightpath.
+    """
+
     metadata = {"render_modes": ["human"]}
 
     def __init__(
@@ -29,6 +48,7 @@ class OpticalEnv(gym.Env):
             capture_traffic_table=capture_traffic_table,
             capture_step_trace=capture_step_trace,
         )
+        self.simulator.post_action_callback = self.on_action_applied
         self.action_space = gym.spaces.Discrete(self.simulator.total_actions)
         observation_shape = (
             (0,)
@@ -46,10 +66,20 @@ class OpticalEnv(gym.Env):
         # Seed gymnasium's np_random alongside the simulator's own RNG so the
         # env satisfies the Gymnasium API contract (check_env).
         super().reset(seed=seed)
-        return self.simulator.reset(seed=seed, options=options)
+        observation, info = self.simulator.reset(seed=seed, options=options)
+        return self.observation(observation), info
 
     def step(self, action: int):
-        return self.simulator.step(int(action))
+        observation, reward, terminated, truncated, info = self.simulator.step(int(action))
+        return self.observation(observation), reward, terminated, truncated, info
+
+    def observation(self, observation: np.ndarray) -> Any:
+        """Map the simulator observation to the returned observation (identity)."""
+        return observation
+
+    def on_action_applied(self, transition: StepTransition) -> None:
+        """Hook called right after each action is applied (no-op by default)."""
+        return None
 
     def action_masks(self) -> np.ndarray | None:
         return self.simulator.action_masks()

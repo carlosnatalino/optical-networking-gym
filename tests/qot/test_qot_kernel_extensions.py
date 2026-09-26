@@ -243,6 +243,47 @@ def test_summary_nli_scale_and_extra_nsr() -> None:
         np.testing.assert_allclose(compiled, python, rtol=1e-12)
 
 
+def _path_noise(kernel, rng: np.random.Generator):
+    lengths = np.concatenate([_link()[0], _link(2)[0]])
+    n = lengths.shape[0]
+    running = _running(6, rng)
+    return kernel.path_noise(
+        np.array([0, 3, 5], dtype=np.int32),
+        lengths,
+        np.full(n, ALPHA),
+        np.full(n, 10 ** 0.55),
+        10 ** (rng.uniform(0, 1.0, n) / 10),
+        10 ** (rng.uniform(0, 1.0, n) / 10),
+        rng.uniform(-0.3, 0.3, size=(n, 320)),
+        np.array([0, 4, 6], dtype=np.int32),
+        running["ids"],
+        running["freqs"],
+        running["bw"],
+        running["phi"],
+        running["powers"],
+        current_service_id=0,
+        center_frequency=F_START + SLOT * 152,
+        bandwidth=SLOT * 4,
+        launch_power=5e-4,
+        include_nli=True,
+        frequency_start=F_START,
+        frequency_slot_bandwidth=SLOT,
+        interferer_psd_actual=True,
+        nli_scale=1.2,
+        extra_nsr=2e-3,
+    )
+
+
+def test_path_noise_matches_python_twin_and_summary() -> None:
+    compiled = _path_noise(compiled_kernel, np.random.default_rng(8))
+    python = _path_noise(python_kernel, np.random.default_rng(8))
+    for got, expected in zip(compiled, python):
+        np.testing.assert_allclose(got, expected, rtol=1e-12)
+    link_gsnr, link_ase, _, total, _, _, _ = compiled
+    raw_nli = np.sum(link_gsnr - link_ase)
+    assert total == pytest.approx(link_gsnr.sum() + 0.2 * raw_nli + 2e-3, rel=1e-12)
+
+
 def test_summary_defaults_match_python_twin_exactly() -> None:
     for compiled, python in zip(_summarize(compiled_kernel), _summarize(python_kernel)):
         np.testing.assert_allclose(compiled, python, rtol=1e-12)
