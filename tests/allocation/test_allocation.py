@@ -4,8 +4,8 @@ from pathlib import Path
 
 import numpy as np
 
-from optical_networking_gym_v2 import RuntimeState, ScenarioConfig, ServiceRequest, TopologyModel
-from optical_networking_gym_v2.network import (
+from optical_networking_gym import RuntimeState, ScenarioConfig, ServiceRequest, TopologyModel
+from optical_networking_gym.network import (
     available_slots_for_path,
     build_first_fit_allocation,
     candidate_starts,
@@ -16,7 +16,7 @@ from optical_networking_gym_v2.network import (
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-RING_4_PATH = PROJECT_ROOT / "src" / "optical_networking_gym_v2" / "topologies" / "ring_4.txt"
+RING_4_PATH = PROJECT_ROOT / "src" / "optical_networking_gym" / "topologies" / "ring_4.txt"
 
 
 def _topology() -> TopologyModel:

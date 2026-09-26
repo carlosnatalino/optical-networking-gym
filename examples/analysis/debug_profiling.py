@@ -3,8 +3,8 @@ from __future__ import annotations
 import cProfile
 from pathlib import Path
 
-from optical_networking_gym_v2 import BUILTIN_TOPOLOGY_DIR, make_env, select_first_fit_action, set_topology_dir
-from optical_networking_gym_v2.instrumentation.profiling import write_cprofile_stats
+from optical_networking_gym import BUILTIN_TOPOLOGY_DIR, make_env, select_first_fit_action, set_topology_dir
+from optical_networking_gym.instrumentation.profiling import write_cprofile_stats
 
 
 TOPOLOGY_DIR = BUILTIN_TOPOLOGY_DIR

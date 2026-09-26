@@ -3,8 +3,8 @@
 Start with the canonical scenario API:
 
 ```python
-from optical_networking_gym_v2 import ScenarioConfig, iter_scenarios, make_env
-from optical_networking_gym_v2.utils.sweep_reporting import Parallelism
+from optical_networking_gym import ScenarioConfig, iter_scenarios, make_env
+from optical_networking_gym.utils.sweep_reporting import Parallelism
 
 env = make_env(scenario="ring4_quickstart")
 env = make_env(scenario="nobel_eu_baseline", load=400, margin=2.0)

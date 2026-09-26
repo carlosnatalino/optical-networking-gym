@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from optical_networking_gym_v2.utils.sweep_reporting import aggregate_summary_metrics
-from optical_networking_gym_v2.utils.sweep_reporting import (
+from optical_networking_gym.utils.sweep_reporting import aggregate_summary_metrics
+from optical_networking_gym.utils.sweep_reporting import (
     Parallelism,
     create_experiment_run,
     run_cases,

@@ -4,7 +4,7 @@ from collections import Counter
 import json
 from pathlib import Path
 
-from optical_networking_gym_v2 import (
+from optical_networking_gym import (
     OpticalEnv,
     ScenarioConfig,
     TopologyModel,
@@ -15,10 +15,10 @@ from optical_networking_gym_v2 import (
     select_first_fit_action,
     write_traffic_table_jsonl,
 )
-from optical_networking_gym_v2.instrumentation.traces import write_step_trace_jsonl
+from optical_networking_gym.instrumentation.traces import write_step_trace_jsonl
 
 
-from optical_networking_gym_v2 import BUILTIN_TOPOLOGY_DIR
+from optical_networking_gym import BUILTIN_TOPOLOGY_DIR
 TOPOLOGY_DIR = BUILTIN_TOPOLOGY_DIR
 RESULTS_DIR = Path(__file__).resolve().parents[1] / "results"
 

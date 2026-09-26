@@ -4,19 +4,19 @@ from pathlib import Path
 
 import pytest
 
-from optical_networking_gym_v2 import (
+from optical_networking_gym import (
     BUILTIN_TOPOLOGY_DIR,
     ScenarioConfig,
     build_scenario,
     build_scenario_grid,
     list_scenarios,
 )
-from optical_networking_gym_v2.utils.experiment_scenarios import (
+from optical_networking_gym.utils.experiment_scenarios import (
     build_legacy_benchmark_scenario,
     build_nobel_eu_graph_load_scenario,
     build_nobel_eu_ofc_v1_scenario,
 )
-from optical_networking_gym_v2.utils.experiment_utils import DEFAULT_BIT_RATES, SimulationUtils
+from optical_networking_gym.utils.experiment_utils import DEFAULT_BIT_RATES, SimulationUtils
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]

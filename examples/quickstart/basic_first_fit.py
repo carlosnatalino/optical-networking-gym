@@ -4,7 +4,7 @@ from collections import Counter
 import json
 from pathlib import Path
 
-from optical_networking_gym_v2 import make_env, select_first_fit_action
+from optical_networking_gym import make_env, select_first_fit_action
 
 
 RESULTS_DIR = Path(__file__).resolve().parents[1] / "results"

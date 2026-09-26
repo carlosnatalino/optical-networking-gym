@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from optical_networking_gym_v2 import MaskMode, Modulation, ScenarioConfig, TrafficMode
+from optical_networking_gym import MaskMode, Modulation, ScenarioConfig, TrafficMode
 
 
 def test_scenario_config_defaults_follow_architecture() -> None:

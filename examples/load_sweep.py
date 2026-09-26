@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 _MODULE_PATH = Path(__file__).resolve().parent / "heuristics" / "load_sweep.py"
-_SPEC = importlib.util.spec_from_file_location("optical_networking_gym_v2_examples_heuristics_load_sweep", _MODULE_PATH)
+_SPEC = importlib.util.spec_from_file_location("optical_networking_gym_examples_heuristics_load_sweep", _MODULE_PATH)
 if _SPEC is None or _SPEC.loader is None:
     raise RuntimeError(f"could not load example module at {_MODULE_PATH}")
 _MODULE = importlib.util.module_from_spec(_SPEC)

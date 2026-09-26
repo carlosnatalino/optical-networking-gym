@@ -4,10 +4,10 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
-from optical_networking_gym_v2 import build_scenario
-from optical_networking_gym_v2.utils.experiment_utils import SimulationUtils
-from optical_networking_gym_v2.utils.experiment_utils import build_standard_sweep_parser, run_first_fit_sweep
-from optical_networking_gym_v2.utils.sweep_reporting import Parallelism
+from optical_networking_gym import build_scenario
+from optical_networking_gym.utils.experiment_utils import SimulationUtils
+from optical_networking_gym.utils.experiment_utils import build_standard_sweep_parser, run_first_fit_sweep
+from optical_networking_gym.utils.sweep_reporting import Parallelism
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
