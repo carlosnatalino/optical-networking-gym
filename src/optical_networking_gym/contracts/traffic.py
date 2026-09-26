@@ -35,8 +35,13 @@ class ServiceRequest:
     traffic_origin: str | None = None
     table_row_index: int | None = None
     table_id: str | None = None
+    # Per-request launch power (dBm). ``None`` means "use the scenario's
+    # ``launch_power_dbm``" (the historical single-power behaviour).
+    launch_power_dbm: float | None = None
 
     def __post_init__(self) -> None:
+        if self.launch_power_dbm is not None and not np.isfinite(self.launch_power_dbm):
+            raise ValueError("launch_power_dbm must be finite when provided")
         _require_non_negative_int("request_index", self.request_index)
         _require_non_negative_int("service_id", self.service_id)
         _require_positive_number("bit_rate", self.bit_rate)

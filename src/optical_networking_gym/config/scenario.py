@@ -5,11 +5,14 @@ from pathlib import Path
 
 from collections.abc import Sequence
 
+import numpy as np
+
 from optical_networking_gym.contracts.enums import MaskMode, RewardProfile, TrafficMode
 from optical_networking_gym.contracts.modulation import Modulation
 
 
 _VALID_QOT_CONSTRAINTS = frozenset({"ASE+NLI", "DIST"})
+_VALID_INTERFERER_PSD_MODES = frozenset({"cut", "actual"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +43,15 @@ class ScenarioConfig:
     frequency_start: float = (3e8 / 1565e-9)
     frequency_slot_bandwidth: float = 12.5e9
     launch_power_dbm: float = 0.0
+    # Optional per-request launch powers (dBm): when set, every dynamic request
+    # draws its launch power uniformly from these values with a dedicated RNG
+    # stream (``launch_power_seed``), independent of the traffic RNG.
+    launch_power_dbm_choices: tuple[float, ...] | None = None
+    launch_power_seed: int | None = None
+    # NLI interferer power spectral density: "cut" assumes every interferer has
+    # the channel-under-test PSD (historical behaviour); "actual" uses each
+    # interferer's own launch power and bandwidth.
+    nli_interferer_psd: str = "cut"
     margin: float = 0.0
     bandwidth: float | None = None
     modulations: tuple[Modulation, ...] = ()
@@ -72,6 +84,17 @@ class ScenarioConfig:
             raise ValueError("channel_width must be positive")
         if self.frequency_slot_bandwidth <= 0:
             raise ValueError("frequency_slot_bandwidth must be positive")
+        if self.nli_interferer_psd not in _VALID_INTERFERER_PSD_MODES:
+            raise ValueError(
+                "nli_interferer_psd must be one of: " + ", ".join(sorted(_VALID_INTERFERER_PSD_MODES))
+            )
+        if self.launch_power_dbm_choices is not None:
+            choices = tuple(float(value) for value in self.launch_power_dbm_choices)
+            if not choices or not all(np.isfinite(choices)):
+                raise ValueError("launch_power_dbm_choices must be a non-empty sequence of finite values")
+            object.__setattr__(self, "launch_power_dbm_choices", choices)
+        if self.launch_power_seed is not None and self.launch_power_seed < 0:
+            raise ValueError("launch_power_seed must be non-negative")
         if self.qot_constraint not in _VALID_QOT_CONSTRAINTS:
             raise ValueError(
                 "qot_constraint must be one of: " + ", ".join(sorted(_VALID_QOT_CONSTRAINTS))
@@ -183,6 +206,7 @@ class ScenarioConfig:
             self.frequency_start,
             self.frequency_slot_bandwidth,
             self.launch_power_dbm,
+            self.nli_interferer_psd,
             self.margin,
             self.bandwidth,
             self.modulations,

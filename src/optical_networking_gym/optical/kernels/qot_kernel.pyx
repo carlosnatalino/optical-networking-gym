@@ -3,8 +3,10 @@
 # cython: initializedcheck=False
 # cython: nonecheck=False
 # cython: cdivision=True
+"""Compiled QoT kernel. See ``qot_kernel.py`` (the pure-Python twin with the
+same API) for the physical model and references."""
 
-from libc.math cimport asinh, exp, fabs, log10
+from libc.math cimport asinh, exp, fabs, log10, pow
 import numpy as np
 cimport numpy as cnp
 
@@ -16,6 +18,22 @@ cdef double PI_VALUE = 3.14159265358979323846
 cdef double PI_SQUARED = PI_VALUE * PI_VALUE
 cdef double NLI_PREFACTOR_BASE = 8.0 / (27.0 * PI_VALUE * ABS_BETA_2)
 
+EMPTY_POWER_OFFSETS = np.zeros((0, 0), dtype=np.float64)
+
+
+cdef inline Py_ssize_t _slot_index(
+    double frequency,
+    double frequency_start,
+    double slot_bandwidth,
+    Py_ssize_t n_slots,
+) nogil:
+    cdef Py_ssize_t index = <Py_ssize_t>((frequency - frequency_start) / slot_bandwidth)
+    if index < 0:
+        return 0
+    if index >= n_slots:
+        return n_slots - 1
+    return index
+
 
 cdef inline void _accumulate_link_noise_impl(
     const cnp.float64_t[:] span_lengths_km,
@@ -23,41 +41,73 @@ cdef inline void _accumulate_link_noise_impl(
     int span_end,
     const cnp.float64_t[:] span_attenuation_normalized,
     const cnp.float64_t[:] span_noise_figure_normalized,
+    const cnp.float64_t[:] span_input_loss,
+    const cnp.float64_t[:] span_output_loss,
+    const cnp.float64_t[:, :] span_power_offset_db,
     const cnp.int32_t[:] running_service_ids,
     int running_start,
     int running_end,
     const cnp.float64_t[:] running_center_frequencies,
     const cnp.float64_t[:] running_bandwidths,
     const cnp.float64_t[:] running_phi_modulation,
+    const cnp.float64_t[:] running_launch_powers,
     int current_service_id,
     double center_frequency,
     double bandwidth,
     double launch_power,
-    double nli_prefactor,
     bint include_nli,
+    double frequency_start,
+    double frequency_slot_bandwidth,
+    bint interferer_psd_actual,
     double* out_acc_gsnr,
     double* out_acc_ase,
     double* out_acc_nli,
 ):
     cdef Py_ssize_t span_index
     cdef Py_ssize_t running_index
+    cdef Py_ssize_t n_offset_slots = span_power_offset_db.shape[1]
+    cdef bint use_offsets = n_offset_slots > 0
+    cdef Py_ssize_t cut_slot = 0
+    cdef Py_ssize_t running_slot
     cdef double acc_gsnr = 0.0
     cdef double acc_ase = 0.0
     cdef double acc_nli = 0.0
     cdef double attenuation
     cdef double span_length_m
+    cdef double input_loss
+    cdef double offset_linear
+    cdef double running_offset
+    cdef double cut_power_out
+    cdef double cut_power_fibre
+    cdef double cut_psd
+    cdef double running_psd
+    cdef double ratio
     cdef double l_eff_a
     cdef double l_eff
     cdef double sum_phi
     cdef double phi
     cdef double power_nli_span
     cdef double power_ase
+    cdef double gain
+    cdef double nsr_ase
+    cdef double nsr_nli
     cdef double delta_frequency
     cdef double running_bandwidth
+
+    if use_offsets:
+        cut_slot = _slot_index(center_frequency, frequency_start, frequency_slot_bandwidth, n_offset_slots)
 
     for span_index in range(span_start, span_end):
         span_length_m = span_lengths_km[span_index] * 1e3
         attenuation = span_attenuation_normalized[span_index]
+        input_loss = span_input_loss[span_index]
+        if use_offsets:
+            offset_linear = pow(10.0, span_power_offset_db[span_index, cut_slot] / 10.0)
+        else:
+            offset_linear = 1.0
+        cut_power_out = launch_power * offset_linear
+        cut_power_fibre = cut_power_out / input_loss
+        cut_psd = cut_power_fibre / bandwidth
         power_nli_span = 0.0
 
         if include_nli:
@@ -93,30 +143,60 @@ cdef inline void _accumulate_link_noise_impl(
                     * (5.0 / 3.0)
                     * (l_eff / span_length_m)
                 )
+                if interferer_psd_actual:
+                    running_offset = 1.0
+                    if use_offsets:
+                        running_slot = _slot_index(
+                            running_center_frequencies[running_index],
+                            frequency_start,
+                            frequency_slot_bandwidth,
+                            n_offset_slots,
+                        )
+                        running_offset = pow(10.0, span_power_offset_db[span_index, running_slot] / 10.0)
+                    running_psd = (
+                        running_launch_powers[running_index] * running_offset / input_loss
+                    ) / running_bandwidth
+                    ratio = running_psd / cut_psd
+                    phi *= ratio * ratio
                 sum_phi += phi
 
-            power_nli_span = nli_prefactor * l_eff * sum_phi
+            power_nli_span = (cut_psd * cut_psd * cut_psd) * NLI_PREFACTOR_BASE * (GAMMA * GAMMA) * bandwidth * l_eff * sum_phi
 
+        gain = exp(2.0 * attenuation * span_length_m) * input_loss * span_output_loss[span_index]
         power_ase = (
             bandwidth
             * H_PLANCK
             * center_frequency
-            * (exp(2.0 * attenuation * span_length_m) - 1.0)
+            * (gain - 1.0)
             * span_noise_figure_normalized[span_index]
         )
 
+        nsr_ase = power_ase / cut_power_out
+        nsr_nli = power_nli_span / cut_power_fibre
         if include_nli:
-            acc_gsnr += (power_ase + power_nli_span) / launch_power
-            if power_nli_span > 0.0:
-                acc_nli += power_nli_span / launch_power
+            acc_gsnr += nsr_ase + nsr_nli
+            if nsr_nli > 0.0:
+                acc_nli += nsr_nli
         else:
-            acc_gsnr += power_ase / launch_power
+            acc_gsnr += nsr_ase
 
-        acc_ase += power_ase / launch_power
+        acc_ase += nsr_ase
 
     out_acc_gsnr[0] = acc_gsnr
     out_acc_ase[0] = acc_ase
     out_acc_nli[0] = acc_nli
+
+
+cdef inline cnp.ndarray _as_f64(object values, Py_ssize_t size, double fill):
+    if values is None:
+        return np.full(size, fill, dtype=np.float64)
+    return np.ascontiguousarray(values, dtype=np.float64)
+
+
+cdef inline cnp.ndarray _as_offsets(object values):
+    if values is None:
+        return EMPTY_POWER_OFFSETS
+    return np.ascontiguousarray(values, dtype=np.float64)
 
 
 def accumulate_link_noise(
@@ -133,30 +213,48 @@ def accumulate_link_noise(
     double bandwidth,
     double launch_power,
     bint include_nli,
+    object span_input_loss=None,
+    object span_output_loss=None,
+    object span_power_offset_db=None,
+    object running_launch_powers=None,
+    double frequency_start=0.0,
+    double frequency_slot_bandwidth=12.5e9,
+    bint interferer_psd_actual=False,
 ):
+    cdef Py_ssize_t n_spans = span_lengths_km.shape[0]
+    cdef Py_ssize_t n_running = running_service_ids.shape[0]
     cdef double acc_gsnr = 0.0
     cdef double acc_ase = 0.0
     cdef double acc_nli = 0.0
-    cdef double nli_prefactor = ((launch_power / bandwidth) ** 3) * NLI_PREFACTOR_BASE * (GAMMA ** 2) * bandwidth
+    cdef cnp.ndarray input_losses = _as_f64(span_input_loss, n_spans, 1.0)
+    cdef cnp.ndarray output_losses = _as_f64(span_output_loss, n_spans, 1.0)
+    cdef cnp.ndarray offsets = _as_offsets(span_power_offset_db)
+    cdef cnp.ndarray powers = _as_f64(running_launch_powers, n_running, launch_power)
 
     _accumulate_link_noise_impl(
         span_lengths_km,
         0,
-        span_lengths_km.shape[0],
+        n_spans,
         span_attenuation_normalized,
         span_noise_figure_normalized,
+        input_losses,
+        output_losses,
+        offsets,
         running_service_ids,
         0,
-        running_service_ids.shape[0],
+        n_running,
         running_center_frequencies,
         running_bandwidths,
         running_phi_modulation,
+        powers,
         current_service_id,
         center_frequency,
         bandwidth,
         launch_power,
-        nli_prefactor,
         include_nli,
+        frequency_start,
+        frequency_slot_bandwidth,
+        interferer_psd_actual,
         &acc_gsnr,
         &acc_ase,
         &acc_nli,
@@ -184,7 +282,15 @@ def summarize_candidate_starts(
     double launch_power,
     double threshold,
     bint include_nli,
+    object span_input_loss=None,
+    object span_output_loss=None,
+    object span_power_offset_db=None,
+    object running_launch_powers=None,
+    bint interferer_psd_actual=False,
+    double nli_scale=1.0,
+    double extra_nsr=0.0,
 ):
+    cdef Py_ssize_t n_spans = span_lengths_km.shape[0]
     cdef Py_ssize_t candidate_count = candidate_starts.shape[0]
     cdef Py_ssize_t candidate_pos
     cdef Py_ssize_t link_pos
@@ -197,10 +303,10 @@ def summarize_candidate_starts(
     cdef double bandwidth = frequency_slot_bandwidth * service_num_slots
     cdef double center_frequency_offset = frequency_slot_bandwidth * (service_num_slots / 2.0)
     cdef double center_frequency
-    cdef double nli_prefactor = ((launch_power / bandwidth) ** 3) * NLI_PREFACTOR_BASE * (GAMMA ** 2) * bandwidth
     cdef double acc_gsnr
     cdef double acc_ase
     cdef double acc_nli
+    cdef double acc_nli_raw
     cdef double link_acc_gsnr
     cdef double link_acc_ase
     cdef double link_acc_nli
@@ -208,6 +314,10 @@ def summarize_candidate_starts(
     cdef double worst_link_nli_share
     cdef double osnr
     cdef double total_nli_share
+    cdef cnp.ndarray input_losses = _as_f64(span_input_loss, n_spans, 1.0)
+    cdef cnp.ndarray output_losses = _as_f64(span_output_loss, n_spans, 1.0)
+    cdef cnp.ndarray offsets = _as_offsets(span_power_offset_db)
+    cdef cnp.ndarray powers = _as_f64(running_launch_powers, running_service_ids.shape[0], launch_power)
     cdef cnp.ndarray[cnp.npy_bool, ndim=1] meets_threshold = np.zeros(candidate_count, dtype=np.bool_)
     cdef cnp.ndarray[cnp.float64_t, ndim=1] osnr_margin = np.zeros(candidate_count, dtype=np.float64)
     cdef cnp.ndarray[cnp.float64_t, ndim=1] nli_share = np.zeros(candidate_count, dtype=np.float64)
@@ -216,11 +326,15 @@ def summarize_candidate_starts(
     cdef const cnp.float64_t[:] span_lengths_view = span_lengths_km
     cdef const cnp.float64_t[:] span_attenuation_view = span_attenuation_normalized
     cdef const cnp.float64_t[:] span_noise_figure_view = span_noise_figure_normalized
+    cdef const cnp.float64_t[:] input_losses_view = input_losses
+    cdef const cnp.float64_t[:] output_losses_view = output_losses
+    cdef const cnp.float64_t[:, :] offsets_view = offsets
     cdef const cnp.int32_t[:] running_offsets_view = running_offsets
     cdef const cnp.int32_t[:] running_service_ids_view = running_service_ids
     cdef const cnp.float64_t[:] running_center_frequencies_view = running_center_frequencies
     cdef const cnp.float64_t[:] running_bandwidths_view = running_bandwidths
     cdef const cnp.float64_t[:] running_phi_modulation_view = running_phi_modulation
+    cdef const cnp.float64_t[:] running_powers_view = powers
     cdef const cnp.int32_t[:] candidate_starts_view = candidate_starts
     cdef cnp.npy_bool[:] meets_threshold_view = meets_threshold
     cdef cnp.float64_t[:] osnr_margin_view = osnr_margin
@@ -237,6 +351,7 @@ def summarize_candidate_starts(
         acc_gsnr = 0.0
         acc_ase = 0.0
         acc_nli = 0.0
+        acc_nli_raw = 0.0
         worst_link_nli_share = 0.0
 
         for link_pos in range(link_count):
@@ -251,18 +366,24 @@ def summarize_candidate_starts(
                 span_end,
                 span_attenuation_view,
                 span_noise_figure_view,
+                input_losses_view,
+                output_losses_view,
+                offsets_view,
                 running_service_ids_view,
                 running_start,
                 running_end,
                 running_center_frequencies_view,
                 running_bandwidths_view,
                 running_phi_modulation_view,
+                running_powers_view,
                 current_service_id,
                 center_frequency,
                 bandwidth,
                 launch_power,
-                nli_prefactor,
                 include_nli,
+                frequency_start,
+                frequency_slot_bandwidth,
+                interferer_psd_actual,
                 &link_acc_gsnr,
                 &link_acc_ase,
                 &link_acc_nli,
@@ -270,11 +391,18 @@ def summarize_candidate_starts(
             acc_gsnr += link_acc_gsnr
             acc_ase += link_acc_ase
             acc_nli += link_acc_nli
+            acc_nli_raw += link_acc_gsnr - link_acc_ase
             if link_acc_nli > 0.0 or link_acc_ase > 0.0:
                 link_nli_share = link_acc_nli / (link_acc_ase + link_acc_nli)
                 if link_nli_share > worst_link_nli_share:
                     worst_link_nli_share = link_nli_share
 
+        # Defaults (nli_scale=1, extra_nsr=0) leave acc_gsnr bit-identical to
+        # the incoherent per-link sum.
+        if nli_scale != 1.0:
+            acc_gsnr += (nli_scale - 1.0) * acc_nli_raw
+            acc_nli *= nli_scale
+        acc_gsnr += extra_nsr
         osnr = 10.0 * log10(1.0 / acc_gsnr)
         total_nli_share = acc_nli / (acc_ase + acc_nli) if (acc_ase > 0.0 or acc_nli > 0.0) else 0.0
         meets_threshold_view[candidate_pos] = osnr >= threshold
@@ -285,4 +413,4 @@ def summarize_candidate_starts(
     return meets_threshold, osnr_margin, nli_share, worst_link_nli_share_values
 
 
-__all__ = ["accumulate_link_noise", "summarize_candidate_starts"]
+__all__ = ["EMPTY_POWER_OFFSETS", "accumulate_link_noise", "summarize_candidate_starts"]
