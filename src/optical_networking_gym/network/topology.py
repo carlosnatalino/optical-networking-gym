@@ -9,6 +9,8 @@ import xml.dom.minidom
 import networkx as nx
 import numpy as np
 
+from .equipment import GainRipple
+
 
 def _canonical_pair(node_a: str, node_b: str, node_index_by_name: dict[str, int]) -> tuple[str, str]:
     if node_index_by_name[node_a] <= node_index_by_name[node_b]:
@@ -112,9 +114,27 @@ def _read_sndlib_topology(file_path: Path) -> nx.Graph:
 
 @dataclass(frozen=True, slots=True)
 class Span:
+    """One fibre span followed by the amplifier that compensates its loss.
+
+    Attributes:
+        length_km: Fibre length.
+        attenuation_db_per_km: Fibre loss coefficient.
+        noise_figure_db: Noise figure of the amplifier at the end of the span.
+        input_loss_db: Lumped loss (connectors, splices, patch panels) before
+            the fibre; it lowers the power launched into the fibre.
+        output_loss_db: Lumped loss after the fibre, before the amplifier.
+        amplifier_type: Equipment type of the amplifier (informational).
+        gain_ripple: Wavelength-dependent gain deviation of the amplifier, or
+            ``None`` for a flat gain.
+    """
+
     length_km: float
     attenuation_db_per_km: float
     noise_figure_db: float
+    input_loss_db: float = 0.0
+    output_loss_db: float = 0.0
+    amplifier_type: str | None = None
+    gain_ripple: GainRipple | None = None
 
     @property
     def attenuation_normalized(self) -> float:
@@ -123,6 +143,19 @@ class Span:
     @property
     def noise_figure_normalized(self) -> float:
         return float(10 ** (self.noise_figure_db / 10.0))
+
+    @property
+    def input_loss_linear(self) -> float:
+        return float(10 ** (self.input_loss_db / 10.0))
+
+    @property
+    def output_loss_linear(self) -> float:
+        return float(10 ** (self.output_loss_db / 10.0))
+
+    @property
+    def total_loss_db(self) -> float:
+        """Fibre plus lumped losses, i.e. the gain the amplifier must provide."""
+        return float(self.length_km * self.attenuation_db_per_km + self.input_loss_db + self.output_loss_db)
 
 
 @dataclass(frozen=True, slots=True)

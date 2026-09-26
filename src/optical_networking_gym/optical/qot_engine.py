@@ -14,7 +14,7 @@ from optical_networking_gym.contracts import (
 )
 from .kernels.qot_kernel import accumulate_link_noise, summarize_candidate_starts
 from optical_networking_gym.runtime.runtime_state import RuntimeState
-from optical_networking_gym.network.topology import PathRecord, TopologyModel
+from optical_networking_gym.network.topology import PathRecord, Span, TopologyModel
 from optical_networking_gym.config.scenario import ScenarioConfig
 
 
@@ -50,6 +50,9 @@ class _PathSummaryStaticInputs:
     span_lengths: np.ndarray
     span_attenuation: np.ndarray
     span_noise_figure: np.ndarray
+    span_input_loss: np.ndarray
+    span_output_loss: np.ndarray
+    span_power_offset_db: np.ndarray
 
 
 @dataclass(slots=True)
@@ -58,6 +61,9 @@ class _PreparedCandidateSummaryInputs:
     span_lengths: np.ndarray
     span_attenuation: np.ndarray
     span_noise_figure: np.ndarray
+    span_input_loss: np.ndarray
+    span_output_loss: np.ndarray
+    span_power_offset_db: np.ndarray
     running_offsets: np.ndarray
     running_service_ids: np.ndarray
     running_center_frequencies: np.ndarray
@@ -116,8 +122,45 @@ class QoTEngine:
             np.array([span.noise_figure_normalized for span in link.spans], dtype=np.float64)
             for link in topology.links
         )
+        self._link_span_input_loss = tuple(
+            np.array([span.input_loss_linear for span in link.spans], dtype=np.float64)
+            for link in topology.links
+        )
+        self._link_span_output_loss = tuple(
+            np.array([span.output_loss_linear for span in link.spans], dtype=np.float64)
+            for link in topology.links
+        )
+        self._slot_center_frequencies = config.frequency_start + config.frequency_slot_bandwidth * (
+            np.arange(config.num_spectrum_resources, dtype=np.float64) + 0.5
+        )
+        self._link_span_power_offset_db = tuple(
+            self._span_power_offsets(link.spans) for link in topology.links
+        )
+        self._any_power_offsets = any(offsets.shape[1] > 0 for offsets in self._link_span_power_offset_db)
         self._link_interference_cache: dict[int, _LinkInterferenceCache] = {}
         self._path_summary_static_cache: dict[int, _PathSummaryStaticInputs] = {}
+
+    def _span_power_offsets(self, spans: tuple[Span, ...]) -> np.ndarray:
+        """Channel-power offset (dB) at each span input due to EDFA gain ripple.
+
+        The power of a channel entering span ``s`` deviates from its launch
+        power by the accumulated ripple of the amplifiers of spans ``0..s-1`` of
+        the same link; per-channel power equalisation at the ROADM resets the
+        deviation at every link boundary [Mahajan_2020_ModelingEDFAGain]. Returns a
+        ``(n_spans, n_slots)`` array, or ``(n_spans, 0)`` when every amplifier
+        of the link has a flat gain (so the kernel skips the lookup).
+        """
+        if all(span.gain_ripple is None for span in spans):
+            return np.zeros((len(spans), 0), dtype=np.float64)
+        offsets = np.zeros((len(spans), self._slot_center_frequencies.shape[0]), dtype=np.float64)
+        for index, span in enumerate(spans[:-1]):
+            ripple = (
+                span.gain_ripple.at(self._slot_center_frequencies)
+                if span.gain_ripple is not None
+                else 0.0
+            )
+            offsets[index + 1] = offsets[index] + ripple
+        return offsets
 
     def launch_power_for(self, request: ServiceRequest) -> float:
         """Launch power (W) of a request: its own value, else the scenario default."""
@@ -255,6 +298,9 @@ class QoTEngine:
                 span_lengths=static_inputs.span_lengths,
                 span_attenuation=static_inputs.span_attenuation,
                 span_noise_figure=static_inputs.span_noise_figure,
+                span_input_loss=static_inputs.span_input_loss,
+                span_output_loss=static_inputs.span_output_loss,
+                span_power_offset_db=static_inputs.span_power_offset_db,
                 running_offsets=np.zeros(len(static_inputs.link_ids) + 1, dtype=np.int32),
                 running_service_ids=self._empty_service_ids,
                 running_center_frequencies=self._empty_float_values,
@@ -295,6 +341,9 @@ class QoTEngine:
             span_lengths=static_inputs.span_lengths,
             span_attenuation=static_inputs.span_attenuation,
             span_noise_figure=static_inputs.span_noise_figure,
+            span_input_loss=static_inputs.span_input_loss,
+            span_output_loss=static_inputs.span_output_loss,
+            span_power_offset_db=static_inputs.span_power_offset_db,
             running_offsets=running_offsets,
             running_service_ids=running_service_ids,
             running_center_frequencies=running_center_frequencies,
@@ -343,6 +392,9 @@ class QoTEngine:
             launch_power=self._launch_power if launch_power is None else launch_power,
             threshold=threshold,
             include_nli=self._include_nli,
+            span_input_loss=prepared_inputs.span_input_loss,
+            span_output_loss=prepared_inputs.span_output_loss,
+            span_power_offset_db=prepared_inputs.span_power_offset_db,
             running_launch_powers=prepared_inputs.running_launch_powers,
             interferer_psd_actual=self._interferer_psd_actual,
         )
@@ -367,6 +419,10 @@ class QoTEngine:
         span_lengths = np.empty(total_spans, dtype=np.float64)
         span_attenuation = np.empty(total_spans, dtype=np.float64)
         span_noise_figure = np.empty(total_spans, dtype=np.float64)
+        span_input_loss = np.empty(total_spans, dtype=np.float64)
+        span_output_loss = np.empty(total_spans, dtype=np.float64)
+        offset_columns = self._slot_center_frequencies.shape[0] if self._any_power_offsets else 0
+        span_power_offset_db = np.zeros((total_spans, offset_columns), dtype=np.float64)
 
         cursor = 0
         for link_id in path.link_ids:
@@ -376,6 +432,11 @@ class QoTEngine:
             span_lengths[cursor:next_cursor] = link_span_lengths
             span_attenuation[cursor:next_cursor] = self._link_span_attenuation_normalized[link_id]
             span_noise_figure[cursor:next_cursor] = self._link_span_noise_figure_normalized[link_id]
+            span_input_loss[cursor:next_cursor] = self._link_span_input_loss[link_id]
+            span_output_loss[cursor:next_cursor] = self._link_span_output_loss[link_id]
+            link_offsets = self._link_span_power_offset_db[link_id]
+            if offset_columns and link_offsets.shape[1]:
+                span_power_offset_db[cursor:next_cursor, :] = link_offsets
             cursor = next_cursor
 
         static_inputs = _PathSummaryStaticInputs(
@@ -384,6 +445,9 @@ class QoTEngine:
             span_lengths=span_lengths,
             span_attenuation=span_attenuation,
             span_noise_figure=span_noise_figure,
+            span_input_loss=span_input_loss,
+            span_output_loss=span_output_loss,
+            span_power_offset_db=span_power_offset_db,
         )
         self._path_summary_static_cache[path.id] = static_inputs
         return static_inputs
@@ -475,7 +539,12 @@ class QoTEngine:
                 bandwidth=bandwidth,
                 launch_power=launch_power,
                 include_nli=self._include_nli,
+                span_input_loss=self._link_span_input_loss[link_id],
+                span_output_loss=self._link_span_output_loss[link_id],
+                span_power_offset_db=self._link_span_power_offset_db[link_id],
                 running_launch_powers=running_launch_powers,
+                frequency_start=self.config.frequency_start,
+                frequency_slot_bandwidth=self.config.frequency_slot_bandwidth,
                 interferer_psd_actual=self._interferer_psd_actual,
             )
             acc_gsnr += link_acc_gsnr
