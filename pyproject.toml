@@ -28,6 +28,10 @@ where = ["src"]
 [tool.setuptools.package-data]
 optical_networking_gym = ["topologies/*.xml", "topologies/*.txt"]
 
+[tool.uv]
+# Only install package versions uploaded to PyPI at least 30 days ago.
+exclude-newer = "30 days"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--import-mode=importlib"
@@ -36,6 +40,11 @@ addopts = "--import-mode=importlib"
 line-length = 100
 target-version = "py311"
 exclude = ["build", ".venv", "docs"]
+
+[tool.ruff.lint]
+# Pin the rule set explicitly so newer ruff releases that expand the default
+# selection do not break CI (ruff is unpinned in the dev extra).
+select = ["E4", "E7", "E9", "F"]
 
 [tool.ruff.lint.per-file-ignores]
 "examples/*" = ["E402"]
