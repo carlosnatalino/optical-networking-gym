@@ -19,8 +19,9 @@ classifiers = [
 dependencies = ["gymnasium", "networkx", "numpy"]
 
 [project.optional-dependencies]
-dev = ["pytest", "coverage[toml]", "mypy", "ruff", "Cython>=3.0", "setuptools"]
-research = ["matplotlib", "jupyterlab", "pandas"]
+dev = ["pytest", "coverage[toml]", "mypy", "ruff", "Cython>=3.0", "setuptools", "xarray", "h5netcdf", "h5py"]
+# xarray + h5netcdf/h5py: netCDF QoT datasets (examples/JOCN_Benchmark_2024/generate_dataset.py).
+research = ["matplotlib", "jupyterlab", "pandas", "xarray", "h5netcdf", "h5py"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

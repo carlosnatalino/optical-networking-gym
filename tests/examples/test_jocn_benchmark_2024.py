@@ -45,7 +45,7 @@ def test_topology_assets_are_declared_as_package_data() -> None:
 
 
 def test_jocn_scripts_do_not_import_root_package() -> None:
-    for script_name in ("graph_load.py", "graph_margin.py", "graph_launch_power.py"):
+    for script_name in ("graph_load.py", "graph_margin.py", "graph_launch_power.py", "generate_dataset.py"):
         source = (EXAMPLE_DIR / script_name).read_text(encoding="utf-8")
 
         assert "optical_networking_gym.wrappers" not in source
