@@ -13,6 +13,7 @@ from optical_networking_gym.contracts.modulation import Modulation
 
 _VALID_QOT_CONSTRAINTS = frozenset({"ASE+NLI", "DIST"})
 _VALID_INTERFERER_PSD_MODES = frozenset({"cut", "actual"})
+_VALID_NLI_MODULATION_CORRECTIONS = frozenset({"egn_xci", "cfm2", "gn"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +59,14 @@ class ScenarioConfig:
     # Coherent NLI accumulation: the path NLI is multiplied by N_spans**epsilon
     # (0 = incoherent GN model).
     nli_coherence_epsilon: float = 0.0
+    # Modulation-format correction of the closed-form GN model:
+    # "egn_xci" (historical) subtracts the closed-form EGN XCI correction of
+    # each interferer (Poggiolini et al., JLT 2015), so only the interferers'
+    # formats matter; "cfm2" multiplies the SCI term by rho_CUT and every XCI
+    # term by rho_nch (Ranjbar Zefreh et al., JLT 2020; see optical/cfm2.py),
+    # so the lightpath's own format also changes its GSNR; "gn" applies no
+    # correction (Gaussian signals).
+    nli_modulation_correction: str = "egn_xci"
     # Constant-OSNR node contributions (dB); ``None`` disables each term. The
     # add (first node), drop (last node) and express (intermediate nodes) ROADM
     # terms and the transceiver term are added as NSR to every lightpath.
@@ -108,6 +117,11 @@ class ScenarioConfig:
             object.__setattr__(self, "launch_power_dbm_choices", choices)
         if self.launch_power_seed is not None and self.launch_power_seed < 0:
             raise ValueError("launch_power_seed must be non-negative")
+        if self.nli_modulation_correction not in _VALID_NLI_MODULATION_CORRECTIONS:
+            raise ValueError(
+                "nli_modulation_correction must be one of: "
+                + ", ".join(sorted(_VALID_NLI_MODULATION_CORRECTIONS))
+            )
         if not 0.0 <= self.nli_coherence_epsilon < 1.0:
             raise ValueError("nli_coherence_epsilon must be in [0, 1)")
         for name in (
@@ -233,6 +247,7 @@ class ScenarioConfig:
             self.nli_interferer_psd,
             self.nli_include_interferers,
             self.nli_coherence_epsilon,
+            self.nli_modulation_correction,
             self.roadm_add_osnr_db,
             self.roadm_drop_osnr_db,
             self.roadm_express_osnr_db,
