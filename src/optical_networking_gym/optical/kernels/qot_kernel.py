@@ -40,6 +40,11 @@ _NLI_PREFACTOR_BASE = 8.0 / (27.0 * math.pi * _ABS_BETA_2)
 EMPTY_POWER_OFFSETS = np.zeros((0, 0), dtype=np.float64)
 
 
+def _nli_prefactor(power_in_fibre: float, bandwidth: float) -> float:
+    """``(P/B)^3 * 8/(27 pi |beta2|) * gamma^2 * B``, evaluated as on ``main``."""
+    return ((power_in_fibre / bandwidth) ** 3) * _NLI_PREFACTOR_BASE * (_GAMMA**2) * bandwidth
+
+
 def _slot_index(frequency: float, frequency_start: float, slot_bandwidth: float, n_slots: int) -> int:
     index = int((frequency - frequency_start) / slot_bandwidth)
     if index < 0:
@@ -84,14 +89,24 @@ def _accumulate_spans(
         if use_offsets
         else 0
     )
+    nominal_nli_prefactor = _nli_prefactor(launch_power, bandwidth)
 
     for span_index in range(span_start, span_end):
         span_length_m = lengths[span_index] * 1e3
         attenuation = attenuations[span_index]
         input_loss = input_losses[span_index]
-        offset_linear = 10.0 ** (power_offsets_db[span_index, cut_slot] / 10.0) if use_offsets else 1.0
-        cut_power_out = launch_power * offset_linear
-        cut_power_fibre = cut_power_out / input_loss
+        # Nominal span (no connector loss, no power offset): per-call prefactor
+        # and the exact arithmetic of the incoherent model on main.
+        nominal = (not use_offsets) and input_loss == 1.0
+        if nominal:
+            cut_power_out = launch_power
+            cut_power_fibre = launch_power
+            span_nli_prefactor = nominal_nli_prefactor
+        else:
+            offset_linear = 10.0 ** (power_offsets_db[span_index, cut_slot] / 10.0) if use_offsets else 1.0
+            cut_power_out = launch_power * offset_linear
+            cut_power_fibre = cut_power_out / input_loss
+            span_nli_prefactor = _nli_prefactor(cut_power_fibre, bandwidth)
         cut_psd = cut_power_fibre / bandwidth
         power_nli_span = 0.0
 
@@ -145,20 +160,29 @@ def _accumulate_spans(
                     phi *= ratio * ratio
                 sum_phi += phi
 
-            power_nli_span = (cut_psd**3) * _NLI_PREFACTOR_BASE * (_GAMMA**2) * bandwidth * l_eff * sum_phi
+            power_nli_span = span_nli_prefactor * l_eff * sum_phi
 
         gain = math.exp(2.0 * attenuation * span_length_m) * input_loss * output_losses[span_index]
         power_ase = bandwidth * _H_PLANCK * center_frequency * (gain - 1.0) * noise_figures[span_index]
 
-        nsr_ase = power_ase / cut_power_out
-        nsr_nli = power_nli_span / cut_power_fibre
-        if include_nli:
-            acc_gsnr += nsr_ase + nsr_nli
-            if nsr_nli > 0.0:
-                acc_nli += nsr_nli
+        if nominal:
+            # Same expressions (and rounding) as the incoherent model on main.
+            if include_nli:
+                acc_gsnr += (power_ase + power_nli_span) / launch_power
+                if power_nli_span > 0.0:
+                    acc_nli += power_nli_span / launch_power
+            else:
+                acc_gsnr += power_ase / launch_power
+            acc_ase += power_ase / launch_power
         else:
-            acc_gsnr += nsr_ase
-        acc_ase += nsr_ase
+            # ASE is referred to the amplifier output, NLI to the fibre input.
+            if include_nli:
+                acc_gsnr += power_ase / cut_power_out + power_nli_span / cut_power_fibre
+                if power_nli_span > 0.0:
+                    acc_nli += power_nli_span / cut_power_fibre
+            else:
+                acc_gsnr += power_ase / cut_power_out
+            acc_ase += power_ase / cut_power_out
 
     return acc_gsnr, acc_ase, acc_nli
 

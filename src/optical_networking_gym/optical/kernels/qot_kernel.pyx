@@ -35,26 +35,109 @@ cdef inline Py_ssize_t _slot_index(
     return index
 
 
+cdef inline double _nli_prefactor(double power_in_fibre, double bandwidth) noexcept nogil:
+    """``(P/B)^3 * 8/(27 pi |beta2|) * gamma^2 * B``, evaluated as on ``main``."""
+    return pow(power_in_fibre / bandwidth, 3.0) * NLI_PREFACTOR_BASE * pow(GAMMA, 2.0) * bandwidth
+
+
+cdef inline cnp.ndarray _contiguous(cnp.ndarray values):
+    if cnp.PyArray_IS_C_CONTIGUOUS(values):
+        return values
+    return np.ascontiguousarray(values)
+
+
+cdef inline const double* _f64_ptr(cnp.ndarray values) noexcept:
+    return <const double*> cnp.PyArray_DATA(values)
+
+
+# Per-span terms that do not depend on the candidate frequency, computed once per
+# kernel call (row-major ``(n_spans, N_SPAN_TERMS)``) with the same expressions
+# as the per-candidate loop used before, so the results are bit-identical.
+cdef enum:
+    N_SPAN_TERMS = 6
+    TERM_LENGTH_M = 0
+    TERM_L_EFF_A = 1
+    TERM_L_EFF = 2
+    TERM_SUM_PHI_SELF = 3
+    TERM_GAIN_MINUS_ONE = 4
+    TERM_L_EFF_OVER_LENGTH = 5
+
+
+cdef inline void _precompute_span_terms(
+    Py_ssize_t n_spans,
+    const double* span_lengths_km,
+    const double* span_attenuation_normalized,
+    const double* span_input_loss,
+    const double* span_output_loss,
+    double bandwidth,
+    double* terms,
+) noexcept nogil:
+    cdef Py_ssize_t span_index
+    cdef double span_length_m
+    cdef double attenuation
+    cdef double l_eff
+    cdef double* row
+    for span_index in range(n_spans):
+        row = terms + span_index * N_SPAN_TERMS
+        span_length_m = span_lengths_km[span_index] * 1e3
+        attenuation = span_attenuation_normalized[span_index]
+        l_eff = (1.0 - exp(-2.0 * attenuation * span_length_m)) / (2.0 * attenuation)
+        row[TERM_LENGTH_M] = span_length_m
+        row[TERM_L_EFF_A] = 1.0 / (2.0 * attenuation)
+        row[TERM_L_EFF] = l_eff
+        row[TERM_SUM_PHI_SELF] = asinh(PI_SQUARED * ABS_BETA_2 * (bandwidth * bandwidth) / (4.0 * attenuation))
+        row[TERM_GAIN_MINUS_ONE] = (
+            exp(2.0 * attenuation * span_length_m) * span_input_loss[span_index] * span_output_loss[span_index]
+            - 1.0
+        )
+        row[TERM_L_EFF_OVER_LENGTH] = l_eff / span_length_m
+
+
+cdef inline cnp.ndarray _span_terms(
+    Py_ssize_t n_spans,
+    cnp.ndarray lengths,
+    cnp.ndarray attenuations,
+    cnp.ndarray input_losses,
+    cnp.ndarray output_losses,
+    double bandwidth,
+):
+    cdef cnp.ndarray terms = np.empty(n_spans * N_SPAN_TERMS, dtype=np.float64)
+    _precompute_span_terms(
+        n_spans,
+        _f64_ptr(lengths),
+        _f64_ptr(attenuations),
+        _f64_ptr(input_losses),
+        _f64_ptr(output_losses),
+        bandwidth,
+        <double*> cnp.PyArray_DATA(terms),
+    )
+    return terms
+
+
+# The span loop runs once per (candidate start, link), so it takes raw pointers
+# (C-contiguous arrays prepared by the callers) and is ``noexcept nogil``:
+# passing typed memoryviews by value costs a struct copy and a refcount per
+# argument per call, which doubled the kernel time on the hot path.
 cdef inline void _accumulate_link_noise_impl(
-    const cnp.float64_t[:] span_lengths_km,
-    int span_start,
-    int span_end,
-    const cnp.float64_t[:] span_attenuation_normalized,
-    const cnp.float64_t[:] span_noise_figure_normalized,
-    const cnp.float64_t[:] span_input_loss,
-    const cnp.float64_t[:] span_output_loss,
-    const cnp.float64_t[:, :] span_power_offset_db,
-    const cnp.int32_t[:] running_service_ids,
-    int running_start,
-    int running_end,
-    const cnp.float64_t[:] running_center_frequencies,
-    const cnp.float64_t[:] running_bandwidths,
-    const cnp.float64_t[:] running_phi_modulation,
-    const cnp.float64_t[:] running_launch_powers,
+    const double* span_terms,
+    Py_ssize_t span_start,
+    Py_ssize_t span_end,
+    const double* span_noise_figure_normalized,
+    const double* span_input_loss,
+    const double* span_power_offset_db,
+    Py_ssize_t n_offset_slots,
+    const cnp.int32_t* running_service_ids,
+    Py_ssize_t running_start,
+    Py_ssize_t running_end,
+    const double* running_center_frequencies,
+    const double* running_bandwidths,
+    const double* running_phi_modulation,
+    const double* running_launch_powers,
     int current_service_id,
     double center_frequency,
     double bandwidth,
     double launch_power,
+    double nominal_nli_prefactor,
     bint include_nli,
     double frequency_start,
     double frequency_slot_bandwidth,
@@ -62,35 +145,34 @@ cdef inline void _accumulate_link_noise_impl(
     double* out_acc_gsnr,
     double* out_acc_ase,
     double* out_acc_nli,
-):
+) noexcept nogil:
     cdef Py_ssize_t span_index
     cdef Py_ssize_t running_index
-    cdef Py_ssize_t n_offset_slots = span_power_offset_db.shape[1]
     cdef bint use_offsets = n_offset_slots > 0
+    cdef bint nominal
     cdef Py_ssize_t cut_slot = 0
     cdef Py_ssize_t running_slot
     cdef double acc_gsnr = 0.0
     cdef double acc_ase = 0.0
     cdef double acc_nli = 0.0
-    cdef double attenuation
+    cdef const double* row
     cdef double span_length_m
     cdef double input_loss
     cdef double offset_linear
     cdef double running_offset
     cdef double cut_power_out
     cdef double cut_power_fibre
-    cdef double cut_psd
+    cdef double cut_psd = 0.0
+    cdef double span_nli_prefactor
     cdef double running_psd
     cdef double ratio
     cdef double l_eff_a
     cdef double l_eff
+    cdef double l_eff_over_length
     cdef double sum_phi
     cdef double phi
     cdef double power_nli_span
     cdef double power_ase
-    cdef double gain
-    cdef double nsr_ase
-    cdef double nsr_nli
     cdef double delta_frequency
     cdef double running_bandwidth
 
@@ -98,22 +180,32 @@ cdef inline void _accumulate_link_noise_impl(
         cut_slot = _slot_index(center_frequency, frequency_start, frequency_slot_bandwidth, n_offset_slots)
 
     for span_index in range(span_start, span_end):
-        span_length_m = span_lengths_km[span_index] * 1e3
-        attenuation = span_attenuation_normalized[span_index]
+        row = span_terms + span_index * N_SPAN_TERMS
+        span_length_m = row[TERM_LENGTH_M]
         input_loss = span_input_loss[span_index]
-        if use_offsets:
-            offset_linear = pow(10.0, span_power_offset_db[span_index, cut_slot] / 10.0)
+        # Nominal span (no connector loss, no power offset): reuse the per-call
+        # prefactor and the exact arithmetic of the incoherent model on main.
+        nominal = (not use_offsets) and input_loss == 1.0
+        if nominal:
+            cut_power_out = launch_power
+            cut_power_fibre = launch_power
+            span_nli_prefactor = nominal_nli_prefactor
         else:
             offset_linear = 1.0
-        cut_power_out = launch_power * offset_linear
-        cut_power_fibre = cut_power_out / input_loss
-        cut_psd = cut_power_fibre / bandwidth
+            if use_offsets:
+                offset_linear = pow(10.0, span_power_offset_db[span_index * n_offset_slots + cut_slot] / 10.0)
+            cut_power_out = launch_power * offset_linear
+            cut_power_fibre = cut_power_out / input_loss
+            span_nli_prefactor = _nli_prefactor(cut_power_fibre, bandwidth)
+        if interferer_psd_actual:
+            cut_psd = cut_power_fibre / bandwidth
         power_nli_span = 0.0
 
         if include_nli:
-            l_eff_a = 1.0 / (2.0 * attenuation)
-            l_eff = (1.0 - exp(-2.0 * attenuation * span_length_m)) / (2.0 * attenuation)
-            sum_phi = asinh(PI_SQUARED * ABS_BETA_2 * (bandwidth * bandwidth) / (4.0 * attenuation))
+            l_eff_a = row[TERM_L_EFF_A]
+            l_eff = row[TERM_L_EFF]
+            l_eff_over_length = row[TERM_L_EFF_OVER_LENGTH]
+            sum_phi = row[TERM_SUM_PHI_SELF]
 
             for running_index in range(running_start, running_end):
                 if running_service_ids[running_index] == current_service_id:
@@ -141,7 +233,7 @@ cdef inline void _accumulate_link_noise_impl(
                     running_phi_modulation[running_index]
                     * (running_bandwidth / fabs(delta_frequency))
                     * (5.0 / 3.0)
-                    * (l_eff / span_length_m)
+                    * l_eff_over_length
                 )
                 if interferer_psd_actual:
                     running_offset = 1.0
@@ -152,7 +244,9 @@ cdef inline void _accumulate_link_noise_impl(
                             frequency_slot_bandwidth,
                             n_offset_slots,
                         )
-                        running_offset = pow(10.0, span_power_offset_db[span_index, running_slot] / 10.0)
+                        running_offset = pow(
+                            10.0, span_power_offset_db[span_index * n_offset_slots + running_slot] / 10.0
+                        )
                     running_psd = (
                         running_launch_powers[running_index] * running_offset / input_loss
                     ) / running_bandwidth
@@ -160,42 +254,62 @@ cdef inline void _accumulate_link_noise_impl(
                     phi *= ratio * ratio
                 sum_phi += phi
 
-            power_nli_span = (cut_psd * cut_psd * cut_psd) * NLI_PREFACTOR_BASE * (GAMMA * GAMMA) * bandwidth * l_eff * sum_phi
+            power_nli_span = span_nli_prefactor * l_eff * sum_phi
 
-        gain = exp(2.0 * attenuation * span_length_m) * input_loss * span_output_loss[span_index]
         power_ase = (
             bandwidth
             * H_PLANCK
             * center_frequency
-            * (gain - 1.0)
+            * row[TERM_GAIN_MINUS_ONE]
             * span_noise_figure_normalized[span_index]
         )
 
-        nsr_ase = power_ase / cut_power_out
-        nsr_nli = power_nli_span / cut_power_fibre
-        if include_nli:
-            acc_gsnr += nsr_ase + nsr_nli
-            if nsr_nli > 0.0:
-                acc_nli += nsr_nli
+        if nominal:
+            # Same expressions (and rounding) as the incoherent model on main.
+            if include_nli:
+                acc_gsnr += (power_ase + power_nli_span) / launch_power
+                if power_nli_span > 0.0:
+                    acc_nli += power_nli_span / launch_power
+            else:
+                acc_gsnr += power_ase / launch_power
+            acc_ase += power_ase / launch_power
         else:
-            acc_gsnr += nsr_ase
-
-        acc_ase += nsr_ase
+            # ASE is referred to the amplifier output, NLI to the fibre input.
+            if include_nli:
+                acc_gsnr += power_ase / cut_power_out + power_nli_span / cut_power_fibre
+                if power_nli_span > 0.0:
+                    acc_nli += power_nli_span / cut_power_fibre
+            else:
+                acc_gsnr += power_ase / cut_power_out
+            acc_ase += power_ase / cut_power_out
 
     out_acc_gsnr[0] = acc_gsnr
     out_acc_ase[0] = acc_ase
     out_acc_nli[0] = acc_nli
 
 
+cdef inline bint _is_ready_f64(object values):
+    """True for a C-contiguous float64 ndarray (usable without a Python-level copy)."""
+    return (
+        isinstance(values, cnp.ndarray)
+        and cnp.PyArray_TYPE(<cnp.ndarray> values) == cnp.NPY_FLOAT64
+        and cnp.PyArray_IS_C_CONTIGUOUS(<cnp.ndarray> values)
+    )
+
+
 cdef inline cnp.ndarray _as_f64(object values, Py_ssize_t size, double fill):
     if values is None:
         return np.full(size, fill, dtype=np.float64)
+    if _is_ready_f64(values):
+        return <cnp.ndarray> values
     return np.ascontiguousarray(values, dtype=np.float64)
 
 
 cdef inline cnp.ndarray _as_offsets(object values):
     if values is None:
         return EMPTY_POWER_OFFSETS
+    if _is_ready_f64(values):
+        return <cnp.ndarray> values
     return np.ascontiguousarray(values, dtype=np.float64)
 
 
@@ -226,31 +340,42 @@ def accumulate_link_noise(
     cdef double acc_gsnr = 0.0
     cdef double acc_ase = 0.0
     cdef double acc_nli = 0.0
+    cdef cnp.ndarray lengths = _contiguous(span_lengths_km)
+    cdef cnp.ndarray attenuations = _contiguous(span_attenuation_normalized)
+    cdef cnp.ndarray noise_figures = _contiguous(span_noise_figure_normalized)
+    cdef cnp.ndarray service_ids = _contiguous(running_service_ids)
+    cdef cnp.ndarray frequencies = _contiguous(running_center_frequencies)
+    cdef cnp.ndarray bandwidths = _contiguous(running_bandwidths)
+    cdef cnp.ndarray phis = _contiguous(running_phi_modulation)
     cdef cnp.ndarray input_losses = _as_f64(span_input_loss, n_spans, 1.0)
     cdef cnp.ndarray output_losses = _as_f64(span_output_loss, n_spans, 1.0)
     cdef cnp.ndarray offsets = _as_offsets(span_power_offset_db)
     cdef cnp.ndarray powers = _as_f64(running_launch_powers, n_running, launch_power)
+    cdef Py_ssize_t n_offset_slots = offsets.shape[1]
+    cdef cnp.ndarray terms = _span_terms(
+        n_spans, lengths, attenuations, input_losses, output_losses, bandwidth
+    )
 
     _accumulate_link_noise_impl(
-        span_lengths_km,
+        _f64_ptr(terms),
         0,
         n_spans,
-        span_attenuation_normalized,
-        span_noise_figure_normalized,
-        input_losses,
-        output_losses,
-        offsets,
-        running_service_ids,
+        _f64_ptr(noise_figures),
+        _f64_ptr(input_losses),
+        _f64_ptr(offsets) if n_offset_slots > 0 else NULL,
+        n_offset_slots,
+        <const cnp.int32_t*> cnp.PyArray_DATA(service_ids),
         0,
         n_running,
-        running_center_frequencies,
-        running_bandwidths,
-        running_phi_modulation,
-        powers,
+        _f64_ptr(frequencies),
+        _f64_ptr(bandwidths),
+        _f64_ptr(phis),
+        _f64_ptr(powers),
         current_service_id,
         center_frequency,
         bandwidth,
         launch_power,
+        _nli_prefactor(launch_power, bandwidth),
         include_nli,
         frequency_start,
         frequency_slot_bandwidth,
@@ -314,27 +439,37 @@ def summarize_candidate_starts(
     cdef double worst_link_nli_share
     cdef double osnr
     cdef double total_nli_share
+    cdef cnp.ndarray lengths = _contiguous(span_lengths_km)
+    cdef cnp.ndarray attenuations = _contiguous(span_attenuation_normalized)
+    cdef cnp.ndarray noise_figures = _contiguous(span_noise_figure_normalized)
+    cdef cnp.ndarray service_ids = _contiguous(running_service_ids)
+    cdef cnp.ndarray frequencies = _contiguous(running_center_frequencies)
+    cdef cnp.ndarray bandwidths = _contiguous(running_bandwidths)
+    cdef cnp.ndarray phis = _contiguous(running_phi_modulation)
     cdef cnp.ndarray input_losses = _as_f64(span_input_loss, n_spans, 1.0)
     cdef cnp.ndarray output_losses = _as_f64(span_output_loss, n_spans, 1.0)
     cdef cnp.ndarray offsets = _as_offsets(span_power_offset_db)
     cdef cnp.ndarray powers = _as_f64(running_launch_powers, running_service_ids.shape[0], launch_power)
+    cdef Py_ssize_t n_offset_slots = offsets.shape[1]
+    cdef cnp.ndarray terms = _span_terms(
+        n_spans, lengths, attenuations, input_losses, output_losses, bandwidth
+    )
+    cdef const double* terms_ptr = _f64_ptr(terms)
+    cdef const double* noise_figures_ptr = _f64_ptr(noise_figures)
+    cdef const double* input_losses_ptr = _f64_ptr(input_losses)
+    cdef const double* offsets_ptr = _f64_ptr(offsets) if n_offset_slots > 0 else NULL
+    cdef const cnp.int32_t* service_ids_ptr = <const cnp.int32_t*> cnp.PyArray_DATA(service_ids)
+    cdef const double* frequencies_ptr = _f64_ptr(frequencies)
+    cdef const double* bandwidths_ptr = _f64_ptr(bandwidths)
+    cdef const double* phis_ptr = _f64_ptr(phis)
+    cdef const double* powers_ptr = _f64_ptr(powers)
+    cdef double nominal_nli_prefactor = _nli_prefactor(launch_power, bandwidth)
     cdef cnp.ndarray[cnp.npy_bool, ndim=1] meets_threshold = np.zeros(candidate_count, dtype=np.bool_)
     cdef cnp.ndarray[cnp.float64_t, ndim=1] osnr_margin = np.zeros(candidate_count, dtype=np.float64)
     cdef cnp.ndarray[cnp.float64_t, ndim=1] nli_share = np.zeros(candidate_count, dtype=np.float64)
     cdef cnp.ndarray[cnp.float64_t, ndim=1] worst_link_nli_share_values = np.zeros(candidate_count, dtype=np.float64)
     cdef const cnp.int32_t[:] span_offsets_view = span_offsets
-    cdef const cnp.float64_t[:] span_lengths_view = span_lengths_km
-    cdef const cnp.float64_t[:] span_attenuation_view = span_attenuation_normalized
-    cdef const cnp.float64_t[:] span_noise_figure_view = span_noise_figure_normalized
-    cdef const cnp.float64_t[:] input_losses_view = input_losses
-    cdef const cnp.float64_t[:] output_losses_view = output_losses
-    cdef const cnp.float64_t[:, :] offsets_view = offsets
     cdef const cnp.int32_t[:] running_offsets_view = running_offsets
-    cdef const cnp.int32_t[:] running_service_ids_view = running_service_ids
-    cdef const cnp.float64_t[:] running_center_frequencies_view = running_center_frequencies
-    cdef const cnp.float64_t[:] running_bandwidths_view = running_bandwidths
-    cdef const cnp.float64_t[:] running_phi_modulation_view = running_phi_modulation
-    cdef const cnp.float64_t[:] running_powers_view = powers
     cdef const cnp.int32_t[:] candidate_starts_view = candidate_starts
     cdef cnp.npy_bool[:] meets_threshold_view = meets_threshold
     cdef cnp.float64_t[:] osnr_margin_view = osnr_margin
@@ -361,25 +496,25 @@ def summarize_candidate_starts(
             running_end = running_offsets_view[link_pos + 1]
 
             _accumulate_link_noise_impl(
-                span_lengths_view,
+                terms_ptr,
                 span_start,
                 span_end,
-                span_attenuation_view,
-                span_noise_figure_view,
-                input_losses_view,
-                output_losses_view,
-                offsets_view,
-                running_service_ids_view,
+                noise_figures_ptr,
+                input_losses_ptr,
+                offsets_ptr,
+                n_offset_slots,
+                service_ids_ptr,
                 running_start,
                 running_end,
-                running_center_frequencies_view,
-                running_bandwidths_view,
-                running_phi_modulation_view,
-                running_powers_view,
+                frequencies_ptr,
+                bandwidths_ptr,
+                phis_ptr,
+                powers_ptr,
                 current_service_id,
                 center_frequency,
                 bandwidth,
                 launch_power,
+                nominal_nli_prefactor,
                 include_nli,
                 frequency_start,
                 frequency_slot_bandwidth,
@@ -456,28 +591,44 @@ def path_noise(
     cdef cnp.ndarray[cnp.float64_t, ndim=1] link_nli = np.zeros(link_count, dtype=np.float64)
     cdef const cnp.int32_t[:] span_offsets_view = span_offsets
     cdef const cnp.int32_t[:] running_offsets_view = running_offsets
+    cdef cnp.ndarray lengths = _contiguous(span_lengths_km)
+    cdef cnp.ndarray attenuations = _contiguous(span_attenuation_normalized)
+    cdef cnp.ndarray noise_figures = _contiguous(span_noise_figure_normalized)
+    cdef cnp.ndarray input_losses = _contiguous(span_input_loss)
+    cdef cnp.ndarray output_losses = _contiguous(span_output_loss)
+    cdef cnp.ndarray offsets = _contiguous(span_power_offset_db)
+    cdef cnp.ndarray service_ids = _contiguous(running_service_ids)
+    cdef cnp.ndarray frequencies = _contiguous(running_center_frequencies)
+    cdef cnp.ndarray bandwidths = _contiguous(running_bandwidths)
+    cdef cnp.ndarray phis = _contiguous(running_phi_modulation)
+    cdef cnp.ndarray powers = _contiguous(running_launch_powers)
+    cdef Py_ssize_t n_offset_slots = offsets.shape[1]
+    cdef double nominal_nli_prefactor = _nli_prefactor(launch_power, bandwidth)
+    cdef cnp.ndarray terms = _span_terms(
+        lengths.shape[0], lengths, attenuations, input_losses, output_losses, bandwidth
+    )
 
     for link_pos in range(link_count):
         _accumulate_link_noise_impl(
-            span_lengths_km,
+            _f64_ptr(terms),
             span_offsets_view[link_pos],
             span_offsets_view[link_pos + 1],
-            span_attenuation_normalized,
-            span_noise_figure_normalized,
-            span_input_loss,
-            span_output_loss,
-            span_power_offset_db,
-            running_service_ids,
+            _f64_ptr(noise_figures),
+            _f64_ptr(input_losses),
+            _f64_ptr(offsets) if n_offset_slots > 0 else NULL,
+            n_offset_slots,
+            <const cnp.int32_t*> cnp.PyArray_DATA(service_ids),
             running_offsets_view[link_pos],
             running_offsets_view[link_pos + 1],
-            running_center_frequencies,
-            running_bandwidths,
-            running_phi_modulation,
-            running_launch_powers,
+            _f64_ptr(frequencies),
+            _f64_ptr(bandwidths),
+            _f64_ptr(phis),
+            _f64_ptr(powers),
             current_service_id,
             center_frequency,
             bandwidth,
             launch_power,
+            nominal_nli_prefactor,
             include_nli,
             frequency_start,
             frequency_slot_bandwidth,

@@ -108,6 +108,93 @@ def test_defaults_reproduce_historical_model_exactly() -> None:
     assert legacy == explicit
 
 
+def _historical_link_noise(running, *, include_nli, launch_power=1e-3, center_slot=150, width=4):
+    """Oracle: the incoherent link-noise loop of the kernel before the generalisation.
+
+    Copied expression by expression (same operation order), so a default call of
+    the generalised kernel must reproduce it bit for bit on the same platform.
+    """
+    lengths, attenuations, noise_figures = _link()
+    center_frequency = F_START + SLOT * center_slot + SLOT * width / 2.0
+    bandwidth = SLOT * width
+    abs_beta_2 = abs(-21.3e-27)
+    pi_squared = math.pi * math.pi
+    prefactor_base = 8.0 / (27.0 * math.pi * abs_beta_2)
+    nli_prefactor = ((launch_power / bandwidth) ** 3) * prefactor_base * (1.3e-3**2) * bandwidth
+    acc_gsnr = acc_ase = acc_nli = 0.0
+    for span_index, span_length_km in enumerate(lengths):
+        span_length_m = span_length_km * 1e3
+        attenuation = attenuations[span_index]
+        power_nli_span = 0.0
+        if include_nli:
+            l_eff_a = 1.0 / (2.0 * attenuation)
+            l_eff = (1.0 - math.exp(-2.0 * attenuation * span_length_m)) / (2.0 * attenuation)
+            sum_phi = math.asinh(pi_squared * abs_beta_2 * (bandwidth**2) / (4.0 * attenuation))
+            for index, service_id in enumerate(running["ids"]):
+                if service_id == 0:
+                    continue
+                delta_frequency = running["freqs"][index] - center_frequency
+                if delta_frequency == 0.0:
+                    continue
+                width_j = running["bw"][index]
+                scale = pi_squared * abs_beta_2 * l_eff_a * width_j
+                phi = (
+                    math.asinh(scale * (delta_frequency + (width_j / 2.0)))
+                    - math.asinh(scale * (delta_frequency - (width_j / 2.0)))
+                ) - (
+                    running["phi"][index]
+                    * (width_j / abs(delta_frequency))
+                    * (5.0 / 3.0)
+                    * (l_eff / span_length_m)
+                )
+                sum_phi += phi
+            power_nli_span = nli_prefactor * l_eff * sum_phi
+        power_ase = (
+            bandwidth
+            * 6.626e-34
+            * center_frequency
+            * (math.exp(2.0 * attenuation * span_length_m) - 1.0)
+            * noise_figures[span_index]
+        )
+        if include_nli:
+            acc_gsnr += (power_ase + power_nli_span) / launch_power
+            if power_nli_span > 0.0:
+                acc_nli += power_nli_span / launch_power
+        else:
+            acc_gsnr += power_ase / launch_power
+        acc_ase += power_ase / launch_power
+    return acc_gsnr, acc_ase, acc_nli
+
+
+def _call_defaults(kernel, running, *, include_nli):
+    """A call with only the historical arguments (all new ones at their defaults)."""
+    return kernel.accumulate_link_noise(
+        *_link(),
+        running["ids"],
+        running["freqs"],
+        running["bw"],
+        running["phi"],
+        current_service_id=0,
+        center_frequency=F_START + SLOT * 150 + SLOT * 4 / 2.0,
+        bandwidth=SLOT * 4,
+        launch_power=1e-3,
+        include_nli=include_nli,
+    )
+
+
+@pytest.mark.parametrize("include_nli", [True, False])
+def test_default_kernel_equals_historical_formula(include_nli: bool) -> None:
+    """Guards the default path against drift, e.g. a reordered sum or pow -> x*x*x."""
+    running = _running(8, np.random.default_rng(2))
+    expected = _historical_link_noise(running, include_nli=include_nli)
+    twin = _call_defaults(python_kernel, running, include_nli=include_nli)
+    compiled = _call_defaults(compiled_kernel, running, include_nli=include_nli)
+    # Same platform, pure Python on both sides: bit-identical.
+    assert twin == expected
+    # The C compiler may contract multiply-adds (FMA), so allow a few ulps.
+    np.testing.assert_allclose(compiled, expected, rtol=1e-13, atol=0.0)
+
+
 def test_actual_psd_with_equal_psd_matches_cut_mode() -> None:
     running = _running(6, np.random.default_rng(2))
     width = 4
