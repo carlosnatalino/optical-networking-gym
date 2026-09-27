@@ -24,3 +24,41 @@ examples/results/JOCN_Benchmark_2024/<script-name>/<YYYYMMDD-HHMMSS>/
 ```
 
 `plots.ipynb` reads those CSV files and generates the load, margin, and launch-power plots locally.
+
+## QoT datasets (Section 5.C, Fig. 5)
+
+`generate_dataset.py` builds one AI/ML QoT dataset per provisioning heuristic: after a
+warm-up, it processes 100,000 arrivals and saves every accepted lightpath at establishment
+(route, spectrum, launch power, modulation format, GSNR with its ASE/NLI split, per-link
+ASE/NLI noise, link occupancy and all co-propagating channels), plus the link and span
+tables of the network. The defaults are the paper's two most divergent heuristics,
+BM-LS-KSP and LB-BM-KSP (`LS-BM-KSP` and `KSP-LB-BM` in the gym), on nobel-eu at
+210 Erlang and -4 dBm. It needs the `research` extra (`xarray`, `h5netcdf`, `h5py`).
+
+```bash
+python examples/JOCN_Benchmark_2024/generate_dataset.py --workers 2
+# quick smoke run
+python examples/JOCN_Benchmark_2024/generate_dataset.py --arrivals 2000 --warmup 500
+```
+
+It writes one netCDF file per run and per heuristic,
+`jocn2024_qot_<topology>_<load>erl_<policy>_seed<seed>_<run_id>.nc` (open with
+`xarray.open_dataset`), plus `summary.csv` (blocking, GSNR statistics and
+modulation-format shares, the quantities of Fig. 5) and `metadata.json`, to
+`results/JOCN_Benchmark_2024/generate_dataset/<run_id>/`.
+
+Each file is self-contained: besides the samples it holds the link, span and
+k-shortest-path tables, node coordinates, the full scenario configuration (JSON) and the
+original topology file, so `load_topology(dataset)` in `generate_dataset.py` rebuilds the
+gym `TopologyModel` from the file alone. Every variable carries `units` and `description`
+attributes; integer variables point from one table to another (e.g. `path_id` into `path`,
+`hop_link` into `link`, `span_link` into `link`), and `copropagating_*` is a ragged table
+whose rows belong to the lightpath `copropagating_lightpath` at hop `copropagating_hop`.
+As in the gym, one path record serves both directions of a node pair: `path_reversed`
+tells whether a lightpath reads its path backwards, and all per-hop variables are stored
+in traversal order, hop 0 being the link that leaves the source.
+
+`dataset_plots.ipynb` reads the files of a run and reproduces Fig. 5(a) and 5(b), shows
+how to follow the relations between lightpaths, routes, links, spans and co-propagating
+channels, and adds other views (GSNR vs route length, ASE vs NLI, route choice, margins,
+link occupancy and a map of link usage). Figures are saved to `<run>/figures/`.

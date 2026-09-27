@@ -34,6 +34,11 @@ class TrafficModel:
         self._request_index = 0
         self._current_time = 0.0
         self._rng = random.Random(config.seed)
+        # Launch powers use their own stream so enabling per-request powers does
+        # not change the arrival/holding/endpoint sequence of the traffic RNG.
+        self._launch_power_rng = random.Random(
+            config.launch_power_seed if config.launch_power_seed is not None else config.seed
+        )
         self._table_id = self._build_table_id()
         self._captured_records: list[TrafficRecord] = []
 
@@ -93,6 +98,7 @@ class TrafficModel:
             holding_time=holding_time,
             traffic_mode=TrafficMode.DYNAMIC,
             traffic_origin="generator",
+            launch_power_dbm=self._sample_launch_power_dbm(),
         )
         if self.capture_table:
             self._captured_records.append(
@@ -120,6 +126,12 @@ class TrafficModel:
         self._static_cursor += 1
         self._request_index += 1
         return record.to_service_request()
+
+    def _sample_launch_power_dbm(self) -> float | None:
+        choices = self.config.launch_power_dbm_choices
+        if choices is None:
+            return None
+        return float(self._launch_power_rng.choice(choices))
 
     def _sample_node_pair(self) -> tuple[int, int]:
         source_id = self._rng.randrange(self.topology.node_count)

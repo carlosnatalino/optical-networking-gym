@@ -16,10 +16,26 @@ if TYPE_CHECKING:
         occupied_slot_range,
         path_is_free,
     )
+    from .equipment import AmplifierType, EquipmentLibrary, GainRipple
+    from .inventory import (
+        AmplifierRecord,
+        LinkRecord,
+        NetworkInventory,
+        SpanRecord,
+        apply_inventory,
+    )
     from .topology import Link, PathRecord, Span, TopologyModel
     from .traffic_table_io import read_traffic_table_jsonl, write_traffic_table_jsonl
 
 _EXPORTS: dict[str, tuple[str, str]] = {
+    "AmplifierRecord": (".inventory", "AmplifierRecord"),
+    "AmplifierType": (".equipment", "AmplifierType"),
+    "EquipmentLibrary": (".equipment", "EquipmentLibrary"),
+    "GainRipple": (".equipment", "GainRipple"),
+    "LinkRecord": (".inventory", "LinkRecord"),
+    "NetworkInventory": (".inventory", "NetworkInventory"),
+    "SpanRecord": (".inventory", "SpanRecord"),
+    "apply_inventory": (".inventory", "apply_inventory"),
     "Link": (".topology", "Link"),
     "PathRecord": (".topology", "PathRecord"),
     "Span": (".topology", "Span"),
@@ -35,6 +51,14 @@ _EXPORTS: dict[str, tuple[str, str]] = {
 }
 
 __all__ = [
+    "AmplifierRecord",
+    "AmplifierType",
+    "EquipmentLibrary",
+    "GainRipple",
+    "LinkRecord",
+    "NetworkInventory",
+    "SpanRecord",
+    "apply_inventory",
     "Link",
     "PathRecord",
     "Span",

@@ -386,6 +386,7 @@ class RequestAnalysisEngine:
             dtype=np.float32,
         )
 
+        request_launch_power = self.qot_engine.launch_power_for(request)
         prepared_qot_inputs_by_path: list[_PreparedCandidateSummaryInputs | None] = []
         for path in paths:
             if self.config.mask_mode is MaskMode.RESOURCE_ONLY or self.config.qot_constraint == "DIST":
@@ -441,6 +442,8 @@ class RequestAnalysisEngine:
                     service_num_slots=required_slots,
                     candidate_starts=candidate_indices,
                     threshold=modulation.minimum_osnr + self.config.margin,
+                    launch_power=request_launch_power,
+                    path=path,
                 )
                 osnr_margin_full[path_index, modulation_index, candidate_indices] = batch.osnr_margin
                 nli_share_full[path_index, modulation_index, candidate_indices] = batch.nli_share
