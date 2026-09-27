@@ -54,6 +54,9 @@ gym `TopologyModel` from the file alone. Every variable carries `units` and `des
 attributes; integer variables point from one table to another (e.g. `path_id` into `path`,
 `hop_link` into `link`, `span_link` into `link`), and `copropagating_*` is a ragged table
 whose rows belong to the lightpath `copropagating_lightpath` at hop `copropagating_hop`.
+As in the gym, one path record serves both directions of a node pair: `path_reversed`
+tells whether a lightpath reads its path backwards, and all per-hop variables are stored
+in traversal order, hop 0 being the link that leaves the source.
 
 `dataset_plots.ipynb` reads the files of a run and reproduces Fig. 5(a) and 5(b), shows
 how to follow the relations between lightpaths, routes, links, spans and co-propagating

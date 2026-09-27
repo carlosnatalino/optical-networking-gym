@@ -95,10 +95,21 @@ def test_dataset_is_self_contained(script, run_dir: Path) -> None:
     # Each sample's route is the stored path (in either direction).
     np.testing.assert_allclose(ds.route_length_km.values, ds.path_length_km.values[ds.path_id.values])
     assert np.array_equal(ds.hops.values, ds.path_hops.values[ds.path_id.values])
+    # path_id + path_reversed give the exact traversal order, and hop 0 leaves the source.
+    assert set(np.unique(ds.path_reversed.values)) <= {0, 1}
     for i in range(ds.sizes["lightpath"]):
         route = ds.hop_link.values[i]
+        route = route[route >= 0]
         stored = ds.path_links.values[ds.path_id.values[i]]
-        assert sorted(route[route >= 0]) == sorted(stored[stored >= 0])
+        stored = stored[stored >= 0]
+        nodes = ds.path_nodes.values[ds.path_id.values[i]]
+        nodes = nodes[nodes >= 0]
+        if ds.path_reversed.values[i]:
+            stored, nodes = stored[::-1], nodes[::-1]
+        assert list(route) == list(stored)
+        assert nodes[0] == ds.source.values[i] and nodes[-1] == ds.destination.values[i]
+        first = route[0]
+        assert ds.source.values[i] in (ds.link_source.values[first], ds.link_target.values[first])
     config = json.loads(ds.attrs["scenario_config_json"])
     assert config["topology_id"] == "nobel-eu" and config["load"] == 210.0
     assert np.all(np.isfinite(ds.node_x.values)) and np.all(np.isfinite(ds.node_y.values))

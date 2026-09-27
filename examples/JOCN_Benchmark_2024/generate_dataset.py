@@ -23,15 +23,18 @@ Each dataset is a self-documented netCDF file (xarray, h5netcdf engine) with:
 
 * ``lightpath``: request, route, spectrum, launch power, modulation format and
   the GSNR with its ASE and NLI components at establishment;
-* ``lightpath x hop``: the links traversed, their occupancy and each link's
-  ASE and NLI noise-to-signal ratio (per-element noise breakdown);
+* ``lightpath x hop``: the links traversed, in order from the source (hop 0) to
+  the destination, their occupancy and each link's ASE and NLI
+  noise-to-signal ratio (per-element noise breakdown);
 * ``copropagating``: every channel sharing a traversed link at establishment
   (spectrum, bit rate, modulation format, launch power), as a ragged array
   indexed by ``copropagating_lightpath`` and ``copropagating_hop``;
 * ``link`` and ``span``: the physical description of the network (lengths,
   attenuation, amplifier noise figures, lumped losses);
-* ``path``: every k-shortest path of the topology (nodes, links, length), so
-  ``path_id`` of a sample points to its route;
+* ``path``: every k-shortest path of the topology (nodes, links, length), with
+  the gym's path ids. As in the gym, one record serves both directions of a
+  node pair, so a sample's route is ``path_id`` read forwards, or backwards
+  when ``path_reversed`` is 1;
 * ``modulation`` and ``node`` (with coordinates when the topology has them):
   lookup tables.
 
@@ -157,6 +160,16 @@ class DatasetEnv(OpticalEnv):
         index = len(self.collected.lightpath.get("request_index", []))
         links = self.simulator.topology.links
         n_spans = sum(len(links[link_id].spans) for link_id in path.link_ids)
+        # The gym keeps one PathRecord per route, in one direction, for both
+        # directions of a node pair; hops are stored from the source instead.
+        reversed_route = path.node_indices[0] != request.source_id
+        if reversed_route and path.node_indices[-1] != request.source_id:
+            raise ValueError(f"route of service {service_id} does not start or end at its source")
+        traversal = tuple(reversed(path.link_ids)) if reversed_route else tuple(path.link_ids)
+        noise_by_link = {
+            link_id: (float(ase), float(nli))
+            for link_id, ase, nli in zip(breakdown.link_ids, breakdown.link_ase_nsr, breakdown.link_nli_nsr)
+        }
         self.collected.add(
             self.collected.lightpath,
             {
@@ -167,6 +180,7 @@ class DatasetEnv(OpticalEnv):
                 "destination": request.destination_id,
                 "bit_rate": request.bit_rate,
                 "path_id": path.id,
+                "path_reversed": int(reversed_route),
                 "path_k": path.k,
                 "hops": path.hops,
                 "n_spans": n_spans,
@@ -184,7 +198,7 @@ class DatasetEnv(OpticalEnv):
                 "active_lightpaths": len(state.active_services_by_id),
             },
         )
-        for hop, link_id in enumerate(path.link_ids):
+        for hop, link_id in enumerate(traversal):
             others = state.link_active_service_ids[link_id] - {service_id}
             self.collected.add(
                 self.collected.hop,
@@ -192,8 +206,8 @@ class DatasetEnv(OpticalEnv):
                     "lightpath": index,
                     "hop": hop,
                     "link_id": link_id,
-                    "link_ase_nsr": float(breakdown.link_ase_nsr[hop]),
-                    "link_nli_nsr": float(breakdown.link_nli_nsr[hop]),
+                    "link_ase_nsr": noise_by_link[link_id][0],
+                    "link_nli_nsr": noise_by_link[link_id][1],
                     "link_occupancy": float(np.mean(state.slot_allocation[link_id] != -1)),
                     "link_copropagating": len(others),
                 },
@@ -278,7 +292,8 @@ def build_dataset(env: DatasetEnv, collected: _Collected, policy: str, attrs: di
         "source": lp_var("source", np.int16, "1", "Source node (index into `node`)."),
         "destination": lp_var("destination", np.int16, "1", "Destination node (index into `node`)."),
         "bit_rate": lp_var("bit_rate", np.int16, "Gb/s", "Requested bit rate."),
-        "path_id": lp_var("path_id", np.int32, "1", "Chosen route (index into `path`); the traversal order is `hop_link`."),
+        "path_id": lp_var("path_id", np.int32, "1", "Chosen route (index into `path`, the gym's PathRecord.id; shared by both directions of a node pair)."),
+        "path_reversed": lp_var("path_reversed", np.int8, "1", "1 if the lightpath traverses `path_nodes`/`path_links` of `path_id` backwards (source is the path's last node)."),
         "path_k": lp_var("path_k", np.int8, "1", "Rank of the chosen route among the k shortest paths (0 = shortest)."),
         "hops": lp_var("hops", np.int8, "1", "Number of links of the route."),
         "n_spans": lp_var("n_spans", np.int16, "1", "Number of amplified fibre spans of the route."),
@@ -310,7 +325,7 @@ def build_dataset(env: DatasetEnv, collected: _Collected, policy: str, attrs: di
         return xr.Variable(("lightpath", "hop"), values, {"units": units, "description": description})
 
     data_vars |= {
-        "hop_link": hop_var("link_id", np.int16, -1, "1", "Link traversed at each hop (index into `link`); -1 beyond the route."),
+        "hop_link": hop_var("link_id", np.int16, -1, "1", "Link traversed at each hop, from the source (hop 0) to the destination (index into `link`); -1 beyond the route."),
         "hop_ase_nsr": hop_var("link_ase_nsr", np.float64, np.nan, "1", "ASE noise-to-signal ratio (linear) of the link."),
         "hop_nli_nsr": hop_var("link_nli_nsr", np.float64, np.nan, "1", "NLI noise-to-signal ratio (linear) of the link."),
         "hop_occupancy": hop_var("link_occupancy", np.float32, np.nan, "1", "Fraction of occupied slots on the link at establishment."),
