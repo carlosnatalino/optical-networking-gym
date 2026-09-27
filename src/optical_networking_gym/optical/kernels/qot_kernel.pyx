@@ -4,11 +4,15 @@
 # cython: nonecheck=False
 # cython: cdivision=True
 """Compiled QoT kernel. See ``qot_kernel.py`` (the pure-Python twin with the
-same API) for the physical model and references."""
+same API) for the physical model and references, and ``optical/cfm2.py`` for
+the CFM2 modulation-format correction factors."""
 
 from libc.math cimport asinh, exp, fabs, log10, pow
 import numpy as np
 cimport numpy as cnp
+
+from optical_networking_gym.optical.cfm2 import ABS_BETA2_PS2_PER_KM as _ABS_BETA2_PS2_PER_KM
+from optical_networking_gym.optical.cfm2 import CFM2_COEFFICIENTS as _CFM2
 
 
 cdef double ABS_BETA_2 = 21.3e-27
@@ -17,6 +21,21 @@ cdef double H_PLANCK = 6.626e-34
 cdef double PI_VALUE = 3.14159265358979323846
 cdef double PI_SQUARED = PI_VALUE * PI_VALUE
 cdef double NLI_PREFACTOR_BASE = 8.0 / (27.0 * PI_VALUE * ABS_BETA_2)
+
+# CFM2 SCI factor ``rho_CUT`` (a9..a18 of ``optical/cfm2.py``, the single
+# source of the coefficients); the XCI factors ``rho_nch`` are computed by the
+# caller, since they do not depend on the channel under test.
+cdef double CFM2_A9 = _CFM2[8]
+cdef double CFM2_A10 = _CFM2[9]
+cdef double CFM2_A11 = _CFM2[10]
+cdef double CFM2_A12 = _CFM2[11]
+cdef double CFM2_A13 = _CFM2[12]
+cdef double CFM2_A14 = _CFM2[13]
+cdef double CFM2_A15 = _CFM2[14]
+cdef double CFM2_A16 = _CFM2[15]
+cdef double CFM2_A17 = _CFM2[16]
+cdef double CFM2_A18 = _CFM2[17]
+cdef double BETA2_PS2_PER_KM = _ABS_BETA2_PS2_PER_KM
 
 EMPTY_POWER_OFFSETS = np.zeros((0, 0), dtype=np.float64)
 
@@ -70,6 +89,9 @@ cdef inline void _precompute_span_terms(
     const double* span_input_loss,
     const double* span_output_loss,
     double bandwidth,
+    bint cfm2,
+    double cut_phi,
+    double cut_start_distance_km,
     double* terms,
 ) noexcept nogil:
     cdef Py_ssize_t span_index
@@ -77,6 +99,17 @@ cdef inline void _precompute_span_terms(
     cdef double attenuation
     cdef double l_eff
     cdef double* row
+    # CFM2: rho_CUT depends on the span only through the dispersion the CUT
+    # has accumulated since its transmitter, so the per-call parts are hoisted
+    # and the factor is folded into the SCI term (zero cost per candidate).
+    cdef double distance_km = cut_start_distance_km
+    cdef double rho_cut_base = 0.0
+    cdef double rho_cut_scale = 0.0
+    cdef double rho_cut_rate = 0.0
+    if cfm2:
+        rho_cut_base = CFM2_A9 + CFM2_A10 * pow(cut_phi, CFM2_A11)
+        rho_cut_scale = CFM2_A12 * pow(cut_phi, CFM2_A13)
+        rho_cut_rate = 1.0 + CFM2_A14 * pow(bandwidth * 1e-12, CFM2_A15)
     for span_index in range(n_spans):
         row = terms + span_index * N_SPAN_TERMS
         span_length_m = span_lengths_km[span_index] * 1e3
@@ -86,6 +119,11 @@ cdef inline void _precompute_span_terms(
         row[TERM_L_EFF_A] = 1.0 / (2.0 * attenuation)
         row[TERM_L_EFF] = l_eff
         row[TERM_SUM_PHI_SELF] = asinh(PI_SQUARED * ABS_BETA_2 * (bandwidth * bandwidth) / (4.0 * attenuation))
+        if cfm2:
+            row[TERM_SUM_PHI_SELF] *= rho_cut_base + rho_cut_scale * (
+                rho_cut_rate + CFM2_A16 * pow(BETA2_PS2_PER_KM * distance_km + CFM2_A17, CFM2_A18)
+            )
+            distance_km += span_lengths_km[span_index]
         row[TERM_GAIN_MINUS_ONE] = (
             exp(2.0 * attenuation * span_length_m) * span_input_loss[span_index] * span_output_loss[span_index]
             - 1.0
@@ -100,6 +138,9 @@ cdef inline cnp.ndarray _span_terms(
     cnp.ndarray input_losses,
     cnp.ndarray output_losses,
     double bandwidth,
+    bint cfm2,
+    double cut_phi,
+    double cut_start_distance_km,
 ):
     cdef cnp.ndarray terms = np.empty(n_spans * N_SPAN_TERMS, dtype=np.float64)
     _precompute_span_terms(
@@ -109,6 +150,9 @@ cdef inline cnp.ndarray _span_terms(
         _f64_ptr(input_losses),
         _f64_ptr(output_losses),
         bandwidth,
+        cfm2,
+        cut_phi,
+        cut_start_distance_km,
         <double*> cnp.PyArray_DATA(terms),
     )
     return terms
@@ -133,6 +177,7 @@ cdef inline void _accumulate_link_noise_impl(
     const double* running_bandwidths,
     const double* running_phi_modulation,
     const double* running_launch_powers,
+    const double* running_rho,
     int current_service_id,
     double center_frequency,
     double bandwidth,
@@ -175,6 +220,11 @@ cdef inline void _accumulate_link_noise_impl(
     cdef double power_ase
     cdef double delta_frequency
     cdef double running_bandwidth
+    # CFM2 XCI factors of this link: row-major ``(n_spans_link, n_running_link)``,
+    # or NULL for the legacy closed-form EGN correction.
+    cdef bint use_rho = running_rho != NULL
+    cdef Py_ssize_t n_link_running = running_end - running_start
+    cdef const double* rho_row = NULL
 
     if use_offsets:
         cut_slot = _slot_index(center_frequency, frequency_start, frequency_slot_bandwidth, n_offset_slots)
@@ -206,6 +256,8 @@ cdef inline void _accumulate_link_noise_impl(
             l_eff = row[TERM_L_EFF]
             l_eff_over_length = row[TERM_L_EFF_OVER_LENGTH]
             sum_phi = row[TERM_SUM_PHI_SELF]
+            if use_rho:
+                rho_row = running_rho + (span_index - span_start) * n_link_running
 
             for running_index in range(running_start, running_end):
                 if running_service_ids[running_index] == current_service_id:
@@ -229,12 +281,18 @@ cdef inline void _accumulate_link_noise_impl(
                         * running_bandwidth
                         * (delta_frequency - (running_bandwidth / 2.0))
                     )
-                ) - (
-                    running_phi_modulation[running_index]
-                    * (running_bandwidth / fabs(delta_frequency))
-                    * (5.0 / 3.0)
-                    * l_eff_over_length
                 )
+                if use_rho:
+                    # CFM2: multiplicative factor of the interferer.
+                    phi *= rho_row[running_index - running_start]
+                else:
+                    # Closed-form EGN XCI correction (Poggiolini 2015).
+                    phi -= (
+                        running_phi_modulation[running_index]
+                        * (running_bandwidth / fabs(delta_frequency))
+                        * (5.0 / 3.0)
+                        * l_eff_over_length
+                    )
                 if interferer_psd_actual:
                     running_offset = 1.0
                     if use_offsets:
@@ -313,6 +371,47 @@ cdef inline cnp.ndarray _as_offsets(object values):
     return np.ascontiguousarray(values, dtype=np.float64)
 
 
+cdef inline cnp.ndarray _link_rho_bases(
+    const cnp.int32_t[:] span_offsets,
+    const cnp.int32_t[:] running_offsets,
+    Py_ssize_t link_count,
+    bint cfm2,
+):
+    """Start of each link's CFM2 ``(n_spans_link, n_running_link)`` block in the
+    flat ``running_rho`` array; the last entry is the expected total size (all
+    zeros when CFM2 is disabled)."""
+    cdef cnp.ndarray bases = np.zeros(link_count + 1, dtype=np.intp)
+    cdef Py_ssize_t[:] bases_view = bases
+    cdef Py_ssize_t link_pos
+    cdef Py_ssize_t total = 0
+    if cfm2:
+        for link_pos in range(link_count):
+            bases_view[link_pos] = total
+            total += <Py_ssize_t>(span_offsets[link_pos + 1] - span_offsets[link_pos]) * (
+                running_offsets[link_pos + 1] - running_offsets[link_pos]
+            )
+        bases_view[link_count] = total
+    return bases
+
+
+cdef inline object _as_rho(object running_rho, bint cfm2, Py_ssize_t expected):
+    """Validated CFM2 XCI factors, or ``None`` (legacy correction)."""
+    if not cfm2 or expected == 0:
+        return None
+    if running_rho is None:
+        raise ValueError("running_rho is required when cfm2 is enabled and the path has interferers")
+    cdef cnp.ndarray rho = np.ascontiguousarray(running_rho, dtype=np.float64)
+    if rho.shape[0] != expected:
+        raise ValueError(f"running_rho has {rho.shape[0]} entries, expected {expected}")
+    return rho
+
+
+cdef inline const double* _rho_ptr(object rho, Py_ssize_t base) noexcept:
+    if rho is None:
+        return NULL
+    return _f64_ptr(<cnp.ndarray> rho) + base
+
+
 def accumulate_link_noise(
     cnp.ndarray[cnp.float64_t, ndim=1] span_lengths_km,
     cnp.ndarray[cnp.float64_t, ndim=1] span_attenuation_normalized,
@@ -334,9 +433,14 @@ def accumulate_link_noise(
     double frequency_start=0.0,
     double frequency_slot_bandwidth=12.5e9,
     bint interferer_psd_actual=False,
+    bint cfm2=False,
+    double cut_phi=0.0,
+    object running_rho=None,
+    double cut_start_distance_km=0.0,
 ):
     cdef Py_ssize_t n_spans = span_lengths_km.shape[0]
     cdef Py_ssize_t n_running = running_service_ids.shape[0]
+    cdef object rho = _as_rho(running_rho, cfm2, n_spans * n_running)
     cdef double acc_gsnr = 0.0
     cdef double acc_ase = 0.0
     cdef double acc_nli = 0.0
@@ -353,7 +457,15 @@ def accumulate_link_noise(
     cdef cnp.ndarray powers = _as_f64(running_launch_powers, n_running, launch_power)
     cdef Py_ssize_t n_offset_slots = offsets.shape[1]
     cdef cnp.ndarray terms = _span_terms(
-        n_spans, lengths, attenuations, input_losses, output_losses, bandwidth
+        n_spans,
+        lengths,
+        attenuations,
+        input_losses,
+        output_losses,
+        bandwidth,
+        cfm2,
+        cut_phi,
+        cut_start_distance_km,
     )
 
     _accumulate_link_noise_impl(
@@ -371,6 +483,7 @@ def accumulate_link_noise(
         _f64_ptr(bandwidths),
         _f64_ptr(phis),
         _f64_ptr(powers),
+        _rho_ptr(rho, 0),
         current_service_id,
         center_frequency,
         bandwidth,
@@ -414,6 +527,9 @@ def summarize_candidate_starts(
     bint interferer_psd_actual=False,
     double nli_scale=1.0,
     double extra_nsr=0.0,
+    bint cfm2=False,
+    double cut_phi=0.0,
+    object running_rho=None,
 ):
     cdef Py_ssize_t n_spans = span_lengths_km.shape[0]
     cdef Py_ssize_t candidate_count = candidate_starts.shape[0]
@@ -452,8 +568,12 @@ def summarize_candidate_starts(
     cdef cnp.ndarray powers = _as_f64(running_launch_powers, running_service_ids.shape[0], launch_power)
     cdef Py_ssize_t n_offset_slots = offsets.shape[1]
     cdef cnp.ndarray terms = _span_terms(
-        n_spans, lengths, attenuations, input_losses, output_losses, bandwidth
+        n_spans, lengths, attenuations, input_losses, output_losses, bandwidth, cfm2, cut_phi, 0.0
     )
+    cdef cnp.ndarray rho_bases = _link_rho_bases(span_offsets, running_offsets, link_count, cfm2)
+    cdef const Py_ssize_t[:] rho_bases_view = rho_bases
+    cdef object rho = _as_rho(running_rho, cfm2, rho_bases_view[link_count])
+    cdef const double* rho_ptr = _rho_ptr(rho, 0)
     cdef const double* terms_ptr = _f64_ptr(terms)
     cdef const double* noise_figures_ptr = _f64_ptr(noise_figures)
     cdef const double* input_losses_ptr = _f64_ptr(input_losses)
@@ -510,6 +630,7 @@ def summarize_candidate_starts(
                 bandwidths_ptr,
                 phis_ptr,
                 powers_ptr,
+                rho_ptr + rho_bases_view[link_pos] if rho_ptr != NULL else NULL,
                 current_service_id,
                 center_frequency,
                 bandwidth,
@@ -573,6 +694,9 @@ def path_noise(
     bint interferer_psd_actual,
     double nli_scale=1.0,
     double extra_nsr=0.0,
+    bint cfm2=False,
+    double cut_phi=0.0,
+    object running_rho=None,
 ):
     """Per-link and path-total NSR of one channel on one path (see ``qot_kernel.py``)."""
     cdef Py_ssize_t link_count = span_offsets.shape[0] - 1
@@ -605,8 +729,11 @@ def path_noise(
     cdef Py_ssize_t n_offset_slots = offsets.shape[1]
     cdef double nominal_nli_prefactor = _nli_prefactor(launch_power, bandwidth)
     cdef cnp.ndarray terms = _span_terms(
-        lengths.shape[0], lengths, attenuations, input_losses, output_losses, bandwidth
+        lengths.shape[0], lengths, attenuations, input_losses, output_losses, bandwidth, cfm2, cut_phi, 0.0
     )
+    cdef cnp.ndarray rho_bases = _link_rho_bases(span_offsets, running_offsets, link_count, cfm2)
+    cdef const Py_ssize_t[:] rho_bases_view = rho_bases
+    cdef object rho = _as_rho(running_rho, cfm2, rho_bases_view[link_count])
 
     for link_pos in range(link_count):
         _accumulate_link_noise_impl(
@@ -624,6 +751,7 @@ def path_noise(
             _f64_ptr(bandwidths),
             _f64_ptr(phis),
             _f64_ptr(powers),
+            _rho_ptr(rho, rho_bases_view[link_pos]),
             current_service_id,
             center_frequency,
             bandwidth,

@@ -12,6 +12,7 @@ from optical_networking_gym.contracts import (
     ServiceQoTUpdate,
     ServiceRequest,
 )
+from .cfm2 import ABS_BETA2_PS2_PER_KM, PHI_BY_SPECTRAL_EFFICIENCY, rho_interferer
 from .kernels.qot_kernel import path_noise, summarize_candidate_starts
 from optical_networking_gym.runtime.runtime_state import RuntimeState
 from optical_networking_gym.network.topology import PathRecord, Span, TopologyModel
@@ -27,14 +28,15 @@ def _osnr_db_to_nsr(osnr_db: float | None) -> float:
     return 0.0 if osnr_db is None else float(10 ** (-osnr_db / 10.0))
 
 
-_PHI_MODULATION_BY_SE = {
-    1: 1.0,
-    2: 1.0,
-    3: 2.0 / 3.0,
-    4: 17.0 / 25.0,
-    5: 69.0 / 100.0,
-    6: 13.0 / 21.0,
-}
+def _modulation_phi(modulation: Modulation) -> float:
+    """EGN constant ``Phi`` of a modulation format (by spectral efficiency)."""
+    phi = PHI_BY_SPECTRAL_EFFICIENCY.get(modulation.spectral_efficiency)
+    if phi is None:
+        raise ValueError(
+            f"no EGN Phi constant for modulation {modulation.name!r} "
+            f"(spectral efficiency {modulation.spectral_efficiency})"
+        )
+    return phi
 
 
 @dataclass(slots=True)
@@ -45,6 +47,9 @@ class _LinkInterferenceCache:
     bandwidths: np.ndarray
     phi_modulation: np.ndarray
     launch_powers: np.ndarray
+    # CFM2 XCI factors, row-major ``(n_spans_link, n_services)`` flattened
+    # (empty unless ``nli_modulation_correction == "cfm2"``).
+    rho: np.ndarray
 
 
 @dataclass(slots=True)
@@ -74,6 +79,7 @@ class _PreparedCandidateSummaryInputs:
     running_bandwidths: np.ndarray
     running_phi_modulation: np.ndarray
     running_launch_powers: np.ndarray
+    running_rho: np.ndarray
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +164,9 @@ class QoTEngine:
         )
         self._path_terms_cache: dict[int, tuple[float, float, float, float, float]] = {}
         self._interferer_psd_actual = config.nli_interferer_psd == "actual"
+        # Modulation-format correction (see ``ScenarioConfig.nli_modulation_correction``).
+        self._cfm2 = config.nli_modulation_correction == "cfm2"
+        self._gaussian_signals = config.nli_modulation_correction == "gn"
         self._launch_power = dbm_to_watt(config.launch_power_dbm)
         self._empty_service_ids = np.empty(0, dtype=np.int32)
         self._empty_float_values = np.empty(0, dtype=np.float64)
@@ -165,6 +174,13 @@ class QoTEngine:
             np.array([span.length_km for span in link.spans], dtype=np.float64)
             for link in topology.links
         )
+        # CFM2: distance from the start of each link to the input of each span,
+        # and link lengths, for the dispersion accumulated by every channel.
+        self._link_span_start_km = tuple(
+            np.concatenate(([0.0], np.cumsum(lengths[:-1]))) for lengths in self._link_span_lengths_km
+        )
+        self._link_length_km = tuple(float(np.sum(lengths)) for lengths in self._link_span_lengths_km)
+        self._path_link_start_km: dict[int, dict[int, float]] = {}
         self._link_span_attenuation_normalized = tuple(
             np.array([span.attenuation_normalized for span in link.spans], dtype=np.float64)
             for link in topology.links
@@ -239,6 +255,27 @@ class QoTEngine:
         self._path_terms_cache[path.id] = terms
         return terms
 
+    def _cut_phi(self, modulation: Modulation | None) -> float:
+        """``Phi`` of the channel under test, used only by CFM2 (0 otherwise)."""
+        if not self._cfm2:
+            return 0.0
+        if modulation is None:
+            raise ValueError("the CFM2 modulation-format correction needs the lightpath's modulation")
+        return _modulation_phi(modulation)
+
+    def _link_start_km(self, path: PathRecord, link_id: int) -> float:
+        """Distance (km) from the start of ``path`` to the start of ``link_id``,
+        along the link order of the path record (CFM2 accumulated dispersion)."""
+        starts = self._path_link_start_km.get(path.id)
+        if starts is None:
+            starts = {}
+            distance_km = 0.0
+            for path_link_id in path.link_ids:
+                starts[path_link_id] = distance_km
+                distance_km += self._link_length_km[path_link_id]
+            self._path_link_start_km[path.id] = starts
+        return starts[link_id]
+
     def _path_scale_and_extra(self, path: PathRecord) -> tuple[float, float]:
         nli_scale, add, express, drop, transceiver = self._path_terms(path)
         return nli_scale, add + express + drop + transceiver
@@ -252,8 +289,13 @@ class QoTEngine:
         center_frequency: float,
         bandwidth: float,
         launch_power: float,
+        modulation: Modulation | None = None,
     ) -> LightpathNoiseBreakdown:
-        """Per-element noise breakdown of a channel on a path (Cython kernel)."""
+        """Per-element noise breakdown of a channel on a path (Cython kernel).
+
+        ``modulation`` is the channel's format; it is required only by the CFM2
+        modulation-format correction.
+        """
         prepared = self._prepare_candidate_summary_inputs(state, path)
         nli_scale, add, express, drop, transceiver = self._path_terms(path)
         extra = add + express + drop + transceiver
@@ -281,6 +323,9 @@ class QoTEngine:
             interferer_psd_actual=self._interferer_psd_actual,
             nli_scale=nli_scale,
             extra_nsr=extra,
+            cfm2=self._cfm2,
+            cut_phi=self._cut_phi(modulation),
+            running_rho=prepared.running_rho,
         )
         raw_nli_total = float(np.sum(link_gsnr - link_ase))
         return LightpathNoiseBreakdown(
@@ -307,6 +352,7 @@ class QoTEngine:
             center_frequency=service.center_frequency,
             bandwidth=service.bandwidth,
             launch_power=service.launch_power if service.launch_power > 0.0 else self._launch_power,
+            modulation=service.modulation,
         )
 
     def launch_power_for(self, request: ServiceRequest) -> float:
@@ -348,6 +394,7 @@ class QoTEngine:
             bandwidth=candidate.bandwidth,
             launch_power=candidate.launch_power,
             state=state,
+            modulation=candidate.modulation,
         )
         return QoTResult(
             osnr=metrics.osnr,
@@ -364,6 +411,7 @@ class QoTEngine:
             bandwidth=candidate.bandwidth,
             launch_power=candidate.launch_power,
             state=state,
+            modulation=candidate.modulation,
         )
         threshold = candidate.modulation.minimum_osnr + self.config.margin
         return QoTCandidateSummary(
@@ -400,6 +448,7 @@ class QoTEngine:
             bandwidth=bandwidth,
             launch_power=self._launch_power if launch_power is None else launch_power,
             state=state,
+            modulation=modulation,
         )
         threshold = modulation.minimum_osnr + self.config.margin
         return QoTCandidateSummary(
@@ -432,6 +481,7 @@ class QoTEngine:
             threshold=modulation.minimum_osnr + self.config.margin,
             launch_power=launch_power,
             path=path,
+            modulation=modulation,
         )
 
     def _prepare_candidate_summary_inputs(
@@ -455,6 +505,7 @@ class QoTEngine:
                 running_bandwidths=self._empty_float_values,
                 running_phi_modulation=self._empty_float_values,
                 running_launch_powers=self._empty_float_values,
+                running_rho=self._empty_float_values,
             )
         running_descriptors = tuple(
             self._link_running_service_arrays(state, link_id) for link_id in static_inputs.link_ids
@@ -470,6 +521,11 @@ class QoTEngine:
         running_bandwidths = np.empty(total_running, dtype=np.float64)
         running_phi_modulation = np.empty(total_running, dtype=np.float64)
         running_launch_powers = np.empty(total_running, dtype=np.float64)
+        running_rho = (
+            np.concatenate([descriptor.rho for descriptor in running_descriptors])
+            if self._cfm2
+            else self._empty_float_values
+        )
 
         cursor = 0
         for descriptor in running_descriptors:
@@ -498,6 +554,7 @@ class QoTEngine:
             running_bandwidths=running_bandwidths,
             running_phi_modulation=running_phi_modulation,
             running_launch_powers=running_launch_powers,
+            running_rho=running_rho,
         )
 
     def _summarize_candidate_starts_prepared(
@@ -510,6 +567,7 @@ class QoTEngine:
         threshold: float,
         launch_power: float | None = None,
         path: PathRecord | None = None,
+        modulation: Modulation | None = None,
     ) -> _CandidateBatchSummary:
         nli_scale, extra_nsr = (1.0, 0.0) if path is None else self._path_scale_and_extra(path)
         starts = np.asarray(candidate_starts, dtype=np.int32)
@@ -549,6 +607,9 @@ class QoTEngine:
             interferer_psd_actual=self._interferer_psd_actual,
             nli_scale=nli_scale,
             extra_nsr=extra_nsr,
+            cfm2=self._cfm2,
+            cut_phi=self._cut_phi(modulation),
+            running_rho=prepared_inputs.running_rho,
         )
         return _CandidateBatchSummary(
             meets_threshold=meets_threshold,
@@ -615,6 +676,7 @@ class QoTEngine:
             bandwidth=service.bandwidth,
             launch_power=service.launch_power,
             state=state,
+            modulation=service.modulation,
         )
         return ServiceQoTUpdate(
             service_id=service_id,
@@ -658,6 +720,7 @@ class QoTEngine:
         bandwidth: float,
         launch_power: float,
         state: RuntimeState,
+        modulation: Modulation | None,
     ) -> _MetricsSummary:
         prepared = self._prepare_candidate_summary_inputs(state, path)
         nli_scale, extra_nsr = self._path_scale_and_extra(path)
@@ -685,6 +748,9 @@ class QoTEngine:
             interferer_psd_actual=self._interferer_psd_actual,
             nli_scale=nli_scale,
             extra_nsr=extra_nsr,
+            cfm2=self._cfm2,
+            cut_phi=self._cut_phi(modulation),
+            running_rho=prepared.running_rho,
         )
 
         osnr = 10.0 * math.log10(1.0 / acc_gsnr)
@@ -718,6 +784,7 @@ class QoTEngine:
                 bandwidths=np.empty(0, dtype=np.float64),
                 phi_modulation=np.empty(0, dtype=np.float64),
                 launch_powers=np.empty(0, dtype=np.float64),
+                rho=np.empty(0, dtype=np.float64),
             )
             self._link_interference_cache[link_id] = cache
             return cache
@@ -727,6 +794,7 @@ class QoTEngine:
         phi_modulation = np.empty(len(service_ids), dtype=np.float64)
         launch_powers = np.empty(len(service_ids), dtype=np.float64)
         numeric_service_ids = np.empty(len(service_ids), dtype=np.int32)
+        start_distance_km = np.empty(len(service_ids), dtype=np.float64) if self._cfm2 else None
 
         for index, running_service_id in enumerate(service_ids):
             running_service = state.active_services_by_id[running_service_id]
@@ -737,10 +805,25 @@ class QoTEngine:
             numeric_service_ids[index] = running_service_id
             center_frequencies[index] = running_service.center_frequency
             bandwidths[index] = running_service.bandwidth
-            phi_modulation[index] = _PHI_MODULATION_BY_SE[running_service.modulation.spectral_efficiency]
+            phi_modulation[index] = _modulation_phi(running_service.modulation)
+            if start_distance_km is not None:
+                start_distance_km[index] = self._link_start_km(running_service.path, link_id)
             launch_powers[index] = (
                 running_service.launch_power if running_service.launch_power > 0.0 else self._launch_power
             )
+
+        rho = np.empty(0, dtype=np.float64)
+        if start_distance_km is not None:
+            # CFM2 XCI factor of every (span, interferer) pair of the link. It
+            # does not depend on the channel under test, so it is computed once
+            # per link state; dispersion is accumulated from each interferer's
+            # own transmitter.
+            span_distance_km = self._link_span_start_km[link_id][:, None] + start_distance_km[None, :]
+            rho = np.ascontiguousarray(
+                rho_interferer(phi_modulation[None, :], ABS_BETA2_PS2_PER_KM * span_distance_km).ravel()
+            )
+        if self._gaussian_signals:
+            phi_modulation[:] = 0.0
 
         cache = _LinkInterferenceCache(
             version=version,
@@ -749,6 +832,7 @@ class QoTEngine:
             bandwidths=bandwidths,
             phi_modulation=phi_modulation,
             launch_powers=launch_powers,
+            rho=rho,
         )
         self._link_interference_cache[link_id] = cache
         return cache

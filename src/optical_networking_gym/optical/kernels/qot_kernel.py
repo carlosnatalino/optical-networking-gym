@@ -22,6 +22,23 @@ EDFA gain ripple since the last power equalisation), looked up on the slot grid.
 With unit losses, no offsets and equal PSDs the model reduces exactly to the
 original kernel.
 
+Modulation-format correction
+----------------------------
+Two corrections of the Gaussian-signal assumption are available:
+
+* ``cfm2=False`` (default): the closed-form EGN XCI correction of
+  [Poggiolini_2015_SimpleEffectiveClosedForm], subtracting
+  ``Phi_j * (B_j / |Delta f_j|) * (5/3) * L_eff / L_s`` from the XCI term of
+  each interferer ``j``. It depends only on the interferers' formats.
+* ``cfm2=True``: the CFM2 machine-learning factors
+  [RanjbarZefreh_2020_AccurateClosedFormRealTime] (see ``optical/cfm2.py``).
+  The SCI term of every span is multiplied by ``rho_CUT(Phi_CUT, R_CUT,
+  b2acc)``, computed here from ``cut_phi`` and the CUT's accumulated span
+  length, and the XCI term of each interferer by ``rho_nch``, passed in
+  ``running_rho``. ``running_rho`` is flat, with one row-major
+  ``(n_spans_link, n_running_link)`` block per link, in link order, because
+  these factors do not depend on the CUT and the caller can cache them.
+
 References are listed at the end of the file.
 """
 
@@ -30,6 +47,8 @@ from __future__ import annotations
 import math
 
 import numpy as np
+
+from optical_networking_gym.optical.cfm2 import ABS_BETA2_PS2_PER_KM, rho_cut
 
 _ABS_BETA_2 = abs(-21.3e-27)
 _GAMMA = 1.3e-3
@@ -52,6 +71,55 @@ def _slot_index(frequency: float, frequency_start: float, slot_bandwidth: float,
     if index >= n_slots:
         return n_slots - 1
     return index
+
+
+def _span_rho_cut(
+    lengths: np.ndarray,
+    cfm2: bool,
+    cut_phi: float,
+    bandwidth: float,
+    cut_start_distance_km: float,
+) -> np.ndarray | None:
+    """CFM2 SCI factor of every span (``None`` when CFM2 is disabled)."""
+    if not cfm2:
+        return None
+    values = np.empty(lengths.shape[0], dtype=np.float64)
+    distance_km = cut_start_distance_km
+    for span_index in range(lengths.shape[0]):
+        values[span_index] = rho_cut(cut_phi, bandwidth * 1e-12, ABS_BETA2_PS2_PER_KM * distance_km)
+        distance_km += lengths[span_index]
+    return values
+
+
+def _rho_blocks(
+    span_offsets: np.ndarray,
+    running_offsets: np.ndarray,
+    running_rho: np.ndarray | None,
+    cfm2: bool,
+) -> list[np.ndarray | None]:
+    """Per-link CFM2 XCI factor blocks (``None`` entries in legacy mode)."""
+    link_count = max(0, span_offsets.shape[0] - 1)
+    if not cfm2:
+        return [None] * link_count
+    sizes = [
+        int(span_offsets[link_pos + 1] - span_offsets[link_pos])
+        * int(running_offsets[link_pos + 1] - running_offsets[link_pos])
+        for link_pos in range(link_count)
+    ]
+    expected = sum(sizes)
+    if expected == 0:
+        return [None] * link_count
+    if running_rho is None:
+        raise ValueError("running_rho is required when cfm2 is enabled and the path has interferers")
+    rho = np.asarray(running_rho, dtype=np.float64)
+    if rho.shape[0] != expected:
+        raise ValueError(f"running_rho has {rho.shape[0]} entries, expected {expected}")
+    blocks: list[np.ndarray | None] = []
+    base = 0
+    for size in sizes:
+        blocks.append(rho[base : base + size])
+        base += size
+    return blocks
 
 
 def _accumulate_spans(
@@ -78,8 +146,11 @@ def _accumulate_spans(
     frequency_start: float,
     frequency_slot_bandwidth: float,
     interferer_psd_actual: bool,
+    span_rho_cut: np.ndarray | None = None,
+    running_rho: np.ndarray | None = None,
 ) -> tuple[float, float, float]:
     acc_gsnr = 0.0
+    n_link_running = running_end - running_start
     acc_ase = 0.0
     acc_nli = 0.0
     n_offset_slots = power_offsets_db.shape[1] if power_offsets_db.ndim == 2 else 0
@@ -114,6 +185,9 @@ def _accumulate_spans(
             l_eff_a = 1.0 / (2.0 * attenuation)
             l_eff = (1.0 - math.exp(-2.0 * attenuation * span_length_m)) / (2.0 * attenuation)
             sum_phi = math.asinh(_PI_SQUARED * _ABS_BETA_2 * (bandwidth**2) / (4.0 * attenuation))
+            if span_rho_cut is not None:
+                sum_phi *= span_rho_cut[span_index]
+            rho_row = (span_index - span_start) * n_link_running
 
             for running_index in range(running_start, running_end):
                 if service_ids[running_index] == current_service_id:
@@ -137,12 +211,16 @@ def _accumulate_spans(
                         * running_bandwidth
                         * (delta_frequency - (running_bandwidth / 2.0))
                     )
-                ) - (
-                    phi_modulation[running_index]
-                    * (running_bandwidth / abs(delta_frequency))
-                    * (5.0 / 3.0)
-                    * (l_eff / span_length_m)
                 )
+                if running_rho is not None:
+                    phi *= running_rho[rho_row + (running_index - running_start)]
+                else:
+                    phi -= (
+                        phi_modulation[running_index]
+                        * (running_bandwidth / abs(delta_frequency))
+                        * (5.0 / 3.0)
+                        * (l_eff / span_length_m)
+                    )
                 if interferer_psd_actual:
                     running_offset = 1.0
                     if use_offsets:
@@ -208,6 +286,10 @@ def accumulate_link_noise(
     frequency_start: float = 0.0,
     frequency_slot_bandwidth: float = 12.5e9,
     interferer_psd_actual: bool = False,
+    cfm2: bool = False,
+    cut_phi: float = 0.0,
+    running_rho: np.ndarray | None = None,
+    cut_start_distance_km: float = 0.0,
 ) -> tuple[float, float, float]:
     """Accumulate the NSR contributions of one link for one channel.
 
@@ -227,6 +309,12 @@ def accumulate_link_noise(
         frequency_start, frequency_slot_bandwidth: Slot grid (for offset lookup).
         interferer_psd_actual: Use each interferer's own PSD (``True``) or assume
             the CUT's PSD for all channels (``False``, legacy).
+        cfm2: Use the CFM2 modulation-format factors instead of the closed-form
+            EGN XCI correction (see the module docstring).
+        cut_phi: EGN constant ``Phi`` of the CUT's modulation format (CFM2).
+        running_rho: CFM2 XCI factors, row-major ``(n_spans, n_running)``.
+        cut_start_distance_km: Distance the CUT has travelled before this link
+            (CFM2 accumulated dispersion).
 
     Returns:
         ``(nsr_total, nsr_ase, nsr_nli)`` summed over the spans of the link.
@@ -250,6 +338,12 @@ def accumulate_link_noise(
         np.full(n_running, launch_power)
         if running_launch_powers is None
         else np.asarray(running_launch_powers, dtype=np.float64)
+    )
+    (rho_block,) = _rho_blocks(
+        np.array([0, n_spans], dtype=np.int32),
+        np.array([0, n_running], dtype=np.int32),
+        running_rho,
+        cfm2,
     )
     acc = _accumulate_spans(
         0,
@@ -275,6 +369,8 @@ def accumulate_link_noise(
         frequency_start,
         frequency_slot_bandwidth,
         interferer_psd_actual,
+        _span_rho_cut(lengths, cfm2, cut_phi, bandwidth, cut_start_distance_km),
+        rho_block,
     )
     return float(acc[0]), float(acc[1]), float(acc[2])
 
@@ -305,6 +401,9 @@ def summarize_candidate_starts(
     interferer_psd_actual: bool = False,
     nli_scale: float = 1.0,
     extra_nsr: float = 0.0,
+    cfm2: bool = False,
+    cut_phi: float = 0.0,
+    running_rho: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Evaluate the GSNR margin of every candidate start slot on one path.
 
@@ -348,6 +447,8 @@ def summarize_candidate_starts(
     link_count = max(0, span_offsets_arr.shape[0] - 1)
     bandwidth = frequency_slot_bandwidth * service_num_slots
     center_frequency_offset = frequency_slot_bandwidth * (service_num_slots / 2.0)
+    span_rho_cut = _span_rho_cut(lengths, cfm2, cut_phi, bandwidth, 0.0)
+    rho_blocks = _rho_blocks(span_offsets_arr, running_offsets_arr, running_rho, cfm2)
 
     meets_threshold = np.zeros(candidate_count, dtype=np.bool_)
     osnr_margin = np.zeros(candidate_count, dtype=np.float64)
@@ -387,6 +488,8 @@ def summarize_candidate_starts(
                 frequency_start,
                 frequency_slot_bandwidth,
                 interferer_psd_actual,
+                span_rho_cut,
+                rho_blocks[link_pos],
             )
             acc_gsnr += link_gsnr
             acc_ase += link_ase
@@ -438,6 +541,9 @@ def path_noise(
     interferer_psd_actual: bool,
     nli_scale: float = 1.0,
     extra_nsr: float = 0.0,
+    cfm2: bool = False,
+    cut_phi: float = 0.0,
+    running_rho: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float, float, float]:
     """Per-link and path-total NSR of one channel on one path.
 
@@ -465,6 +571,9 @@ def path_noise(
     acc_nli = 0.0
     acc_nli_raw = 0.0
     worst_link_nli_share = 0.0
+    lengths = np.asarray(span_lengths_km, dtype=np.float64)
+    span_rho_cut = _span_rho_cut(lengths, cfm2, cut_phi, bandwidth, 0.0)
+    rho_blocks = _rho_blocks(offsets_arr, running_offsets_arr, running_rho, cfm2)
     for link_pos in range(link_count):
         gsnr, ase, nli = _accumulate_spans(
             int(offsets_arr[link_pos]),
@@ -490,6 +599,8 @@ def path_noise(
             frequency_start,
             frequency_slot_bandwidth,
             interferer_psd_actual,
+            span_rho_cut,
+            rho_blocks[link_pos],
         )
         link_gsnr[link_pos] = gsnr
         link_ase[link_pos] = ase
@@ -525,3 +636,12 @@ __all__ = [
 #     in the Modeling of the Impact of Nonlinear Fiber Propagation Effects on
 #     Uncompensated Coherent Transmission Systems," Journal of Lightwave Technology,
 #     vol. 35, no. 3, pp. 458-480, Feb. 2017, doi: 10.1109/JLT.2016.2613893.
+# [Poggiolini_2015_SimpleEffectiveClosedForm] P. Poggiolini, G. Bosco, A. Carena,
+#     V. Curri, Y. Jiang, and F. Forghieri, "A Simple and Effective Closed-Form GN
+#     Model Correction Formula Accounting for Signal Non-Gaussian Distribution,"
+#     Journal of Lightwave Technology, vol. 33, no. 2, pp. 459-473, Jan. 2015.
+# [RanjbarZefreh_2020_AccurateClosedFormRealTime] M. Ranjbar Zefreh, F. Forghieri,
+#     S. Piciaccia, and P. Poggiolini, "Accurate Closed-Form Real-Time EGN Model
+#     Formula Leveraging Machine-Learning Over 8500 Thoroughly Randomized Full
+#     C-Band Systems," Journal of Lightwave Technology, vol. 38, no. 18,
+#     pp. 4987-4999, Sep. 2020, doi: 10.1109/JLT.2020.2997395.

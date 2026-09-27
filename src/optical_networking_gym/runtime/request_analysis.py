@@ -444,6 +444,7 @@ class RequestAnalysisEngine:
                     threshold=modulation.minimum_osnr + self.config.margin,
                     launch_power=request_launch_power,
                     path=path,
+                    modulation=modulation,
                 )
                 osnr_margin_full[path_index, modulation_index, candidate_indices] = batch.osnr_margin
                 nli_share_full[path_index, modulation_index, candidate_indices] = batch.nli_share
