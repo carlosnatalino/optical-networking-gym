@@ -11,8 +11,7 @@ nobel-eu, 5 shortest paths, 320 slots of 12.5 GHz, 80 km spans with
 modulation formats (BPSK to 64QAM) and a flat -4 dBm launch power. The two
 default heuristics are the ones with the most divergent blocking in the
 paper, BM-LS-KSP and LB-BM-KSP, available in the gym as ``LS-BM-KSP`` and
-``KSP-LB-BM``. The script uses the heuristics as currently implemented; it
-does not aim to reproduce the 2024 numbers exactly.
+``KSP-LB-BM``.
 
 Each heuristic runs one continuous stream: ``--warmup`` arrivals bring the
 network to steady state and are not recorded, then ``--arrivals`` arrivals
