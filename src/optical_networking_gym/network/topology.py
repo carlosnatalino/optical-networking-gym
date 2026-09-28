@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from itertools import islice
+import json
 from pathlib import Path
 import math
+from typing import Any
 import xml.dom.minidom
 
 import networkx as nx
@@ -110,6 +112,102 @@ def _read_sndlib_topology(file_path: Path) -> nx.Graph:
             length=length,
         )
         edge_index += 1
+    return graph
+
+
+SPEED_OF_LIGHT_M_PER_S = 299_792_458.0
+# Group index of standard single-mode fibre, used to turn the propagation delay
+# of a T-API link into a fibre length (TwinLight derives the delay with it).
+TAPI_FIBER_GROUP_INDEX = 1.47
+_TAPI_ROADM_PREFIX = "roadm "
+
+
+def _tapi_name(entity: Mapping[str, Any], value_name: str) -> str | None:
+    for item in entity.get("name", ()):
+        if item.get("value-name") == value_name:
+            return str(item.get("value"))
+    return None
+
+
+def _tapi_propagation_delay_ns(link: Mapping[str, Any]) -> float:
+    for characteristic in link.get("latency-characteristic", ()):
+        if characteristic.get("traffic-property-name") == "propagation-delay":
+            return float(characteristic.get("total-size", 0))
+    return 0.0
+
+
+def _tapi_topology(document: Mapping[str, Any]) -> Mapping[str, Any]:
+    context = document.get("tapi-common:context", document)
+    topology_context = context.get("tapi-topology:topology-context", context.get("topology-context"))
+    if topology_context is None:
+        raise ValueError("T-API document has no tapi-topology:topology-context")
+    topologies = topology_context.get("topology", ())
+    if not topologies:
+        raise ValueError("T-API topology context has no topology")
+    return topologies[0]
+
+
+def _tapi_site_name(node_name: str) -> str:
+    if node_name.lower().startswith(_TAPI_ROADM_PREFIX):
+        return node_name[len(_TAPI_ROADM_PREFIX) :]
+    return node_name
+
+
+def _read_tapi_topology(file_path: Path) -> nx.Graph:
+    """Read the first topology of a T-API topology context (JSON).
+
+    Fibre links are the links with a positive ``propagation-delay``
+    (``total-size`` in nanoseconds); their length is the delay times the speed
+    of light in fibre (group index :data:`TAPI_FIBER_GROUP_INDEX`). The nodes
+    are the endpoints of fibre links, i.e. the ROADMs, named without their
+    ``"roadm "`` prefix. Transceivers and the zero-delay links that attach them
+    to their ROADM are ignored. The two unidirectional links between a pair of
+    ROADMs become one undirected link, whose length is the mean of the two.
+    """
+    with file_path.open("r", encoding="utf-8") as handle:
+        topology = _tapi_topology(json.load(handle))
+
+    node_uuids = [node["uuid"] for node in topology.get("node", ())]
+    node_name_by_uuid = {
+        node["uuid"]: _tapi_name(node, "node-name") or node["uuid"] for node in topology.get("node", ())
+    }
+    km_per_ns = SPEED_OF_LIGHT_M_PER_S / TAPI_FIBER_GROUP_INDEX * 1e-12
+    lengths_by_pair: dict[frozenset[str], list[float]] = {}
+    endpoints_by_pair: dict[frozenset[str], tuple[str, str]] = {}
+    for link in topology.get("link", ()):
+        delay_ns = _tapi_propagation_delay_ns(link)
+        endpoints = tuple(point["node-uuid"] for point in link.get("node-edge-point", ()))
+        if delay_ns <= 0 or len(endpoints) != 2 or endpoints[0] == endpoints[1]:
+            continue
+        pair = frozenset(endpoints)
+        endpoints_by_pair.setdefault(pair, (endpoints[0], endpoints[1]))
+        lengths_by_pair.setdefault(pair, []).append(delay_ns * km_per_ns)
+
+    roadm_uuids = {uuid for pair in endpoints_by_pair for uuid in pair}
+    unknown_uuids = roadm_uuids - set(node_name_by_uuid)
+    if unknown_uuids:
+        raise ValueError(f"T-API links reference unknown nodes: {sorted(unknown_uuids)}")
+
+    graph = nx.Graph()
+    site_name_by_uuid: dict[str, str] = {}
+    for uuid in node_uuids:
+        if uuid not in roadm_uuids:
+            continue
+        site_name = _tapi_site_name(node_name_by_uuid[uuid])
+        if graph.has_node(site_name):
+            raise ValueError(f"T-API topology has two ROADMs named {site_name!r}")
+        site_name_by_uuid[uuid] = site_name
+        graph.add_node(site_name, id=len(site_name_by_uuid) - 1)
+
+    for index, (pair, (source_uuid, target_uuid)) in enumerate(endpoints_by_pair.items()):
+        graph.add_edge(
+            site_name_by_uuid[source_uuid],
+            site_name_by_uuid[target_uuid],
+            id=index,
+            index=index,
+            weight=1.0,
+            length=round(float(np.mean(lengths_by_pair[pair])), 3),
+        )
     return graph
 
 
@@ -222,6 +320,8 @@ class TopologyModel:
             graph = _read_txt_topology(path)
         elif path.suffix == ".xml":
             graph = _read_sndlib_topology(path)
+        elif path.suffix == ".json":
+            graph = _read_tapi_topology(path)
         else:
             raise ValueError("Unsupported topology file format")
         resolved_topology_id = topology_id or path.stem

@@ -8,8 +8,11 @@ What actually ships under `examples/`:
   (`make_env` + first-fit heuristic over one episode).
 - `basic_first_fit.py`: compatibility entry point for the quickstart example.
 - `env_test.py`: visual smoke report of a short episode.
-- `create_topology.py`: build a `TopologyModel` from a topology file or
-  built-in name and pickle it under `examples/results/`.
+- `create_topology.py`: build a `TopologyModel` from a topology file
+  (`.xml`, `.txt`, or T-API `.json`) or built-in name and pickle it under
+  `examples/results/`.
+- `topologies/coronet_tapi_topology_context.json`: CORONET CONUS as a T-API
+  topology context, exported by TwinLight.
 
 ## Heuristics
 

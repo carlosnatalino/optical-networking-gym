@@ -8,6 +8,11 @@ Usage:
     python examples/create_topology.py --topology nsfnet_chen -k 5
     python examples/create_topology.py \
         --topology src/optical_networking_gym/topologies/nsfnet_chen.txt -k 5
+    python examples/create_topology.py \
+        --topology examples/topologies/coronet_tapi_topology_context.json -k 5
+
+A ``.json`` file is read as a T-API topology context: one node per ROADM,
+one undirected link per ROADM pair, with lengths from the propagation delay.
 """
 
 from __future__ import annotations
@@ -28,9 +33,9 @@ RESULTS_DIR = Path(__file__).resolve().parent / "results"
 
 
 def resolve_topology_argument(topology: str) -> Path:
-    """Accept either a filesystem path to a .xml/.txt file or a built-in name."""
+    """Accept either a filesystem path to a .xml/.txt/.json file or a built-in name."""
     candidate = Path(topology)
-    if candidate.suffix in {".xml", ".txt"}:
+    if candidate.suffix in {".xml", ".txt", ".json"}:
         if not candidate.exists():
             raise FileNotFoundError(f"Topology file not found: {candidate}")
         return candidate
@@ -51,7 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--topology",
         default=DEFAULT_TOPOLOGY,
         help=(
-            "Network topology to be used: a path to a .xml/.txt file or a "
+            "Network topology to be used: a path to a .xml/.txt/.json (T-API) file or a "
             f"built-in topology name (default: `{DEFAULT_TOPOLOGY}`)"
         ),
     )
