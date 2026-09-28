@@ -223,6 +223,11 @@ def _jocn_benchmark() -> ScenarioConfig:
         load=210.0,
         mean_holding_time=10_800.0,
         qot_constraint="ASE+NLI",
+        # As in the gym used for the article (v1), the NLI includes the XCI of
+        # every established lightpath on the path, each with the PSD of the
+        # channel under test; without it the GSNR would not depend on the load.
+        nli_include_interferers=True,
+        nli_interferer_psd="cut",
         frequency_start=(3e8 / 1565e-9),
         frequency_slot_bandwidth=12.5e9,
         launch_power_dbm=-4.0,

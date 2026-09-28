@@ -39,6 +39,10 @@ Two corrections of the Gaussian-signal assumption are available:
   ``(n_spans_link, n_running_link)`` block per link, in link order, because
   these factors do not depend on the CUT and the caller can cache them.
 
+With ``split_nli=True``, :func:`path_noise` also returns the per-link NLI split
+into its self-channel (SCI) and cross-channel (XCI) parts. They sum to the
+unclipped per-link NLI, ``link_nsr_total - link_nsr_ase``.
+
 References are listed at the end of the file.
 """
 
@@ -148,11 +152,14 @@ def _accumulate_spans(
     interferer_psd_actual: bool,
     span_rho_cut: np.ndarray | None = None,
     running_rho: np.ndarray | None = None,
-) -> tuple[float, float, float]:
+) -> tuple[float, float, float, float, float]:
+    """``(nsr_total, nsr_ase, nsr_nli, nsr_sci, nsr_xci)`` of spans ``span_start:span_end``."""
     acc_gsnr = 0.0
     n_link_running = running_end - running_start
     acc_ase = 0.0
     acc_nli = 0.0
+    acc_sci = 0.0
+    acc_xci = 0.0
     n_offset_slots = power_offsets_db.shape[1] if power_offsets_db.ndim == 2 else 0
     use_offsets = n_offset_slots > 0
     cut_slot = (
@@ -187,6 +194,7 @@ def _accumulate_spans(
             sum_phi = math.asinh(_PI_SQUARED * _ABS_BETA_2 * (bandwidth**2) / (4.0 * attenuation))
             if span_rho_cut is not None:
                 sum_phi *= span_rho_cut[span_index]
+            sci_phi = sum_phi
             rho_row = (span_index - span_start) * n_link_running
 
             for running_index in range(running_start, running_end):
@@ -239,6 +247,10 @@ def _accumulate_spans(
                 sum_phi += phi
 
             power_nli_span = span_nli_prefactor * l_eff * sum_phi
+            # SCI/XCI split: XCI is ``sum_phi - SCI`` (exactly 0 without interferers).
+            nli_reference = launch_power if nominal else cut_power_fibre
+            acc_sci += span_nli_prefactor * l_eff * sci_phi / nli_reference
+            acc_xci += span_nli_prefactor * l_eff * (sum_phi - sci_phi) / nli_reference
 
         gain = math.exp(2.0 * attenuation * span_length_m) * input_loss * output_losses[span_index]
         power_ase = bandwidth * _H_PLANCK * center_frequency * (gain - 1.0) * noise_figures[span_index]
@@ -262,7 +274,7 @@ def _accumulate_spans(
                 acc_gsnr += power_ase / cut_power_out
             acc_ase += power_ase / cut_power_out
 
-    return acc_gsnr, acc_ase, acc_nli
+    return acc_gsnr, acc_ase, acc_nli, acc_sci, acc_xci
 
 
 def accumulate_link_noise(
@@ -464,7 +476,7 @@ def summarize_candidate_starts(
         worst_link_nli_share = 0.0
 
         for link_pos in range(link_count):
-            link_gsnr, link_ase, link_nli = _accumulate_spans(
+            link_gsnr, link_ase, link_nli, _, _ = _accumulate_spans(
                 int(span_offsets_arr[link_pos]),
                 int(span_offsets_arr[link_pos + 1]),
                 lengths,
@@ -544,7 +556,8 @@ def path_noise(
     cfm2: bool = False,
     cut_phi: float = 0.0,
     running_rho: np.ndarray | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float, float, float]:
+    split_nli: bool = False,
+) -> tuple:
     """Per-link and path-total NSR of one channel on one path.
 
     Same physics and inputs as :func:`summarize_candidate_starts` (all links of
@@ -555,7 +568,8 @@ def path_noise(
         ``(link_nsr_total, link_nsr_ase, link_nsr_nli, path_nsr_total,
         path_nsr_ase, path_nsr_nli, worst_link_nli_share)``. Per-link values are
         incoherent; the path NLI and total include the coherence scale and the
-        path total includes ``extra_nsr``.
+        path total includes ``extra_nsr``. With ``split_nli=True`` two more
+        arrays follow: the per-link SCI and XCI NSR.
     """
     offsets_arr = np.asarray(span_offsets, dtype=np.int32)
     running_offsets_arr = np.asarray(running_offsets, dtype=np.int32)
@@ -563,6 +577,8 @@ def path_noise(
     link_gsnr = np.zeros(link_count, dtype=np.float64)
     link_ase = np.zeros(link_count, dtype=np.float64)
     link_nli = np.zeros(link_count, dtype=np.float64)
+    link_sci = np.zeros(link_count if split_nli else 0, dtype=np.float64)
+    link_xci = np.zeros(link_count if split_nli else 0, dtype=np.float64)
     offsets = np.asarray(span_power_offset_db, dtype=np.float64)
     if offsets.ndim != 2:
         offsets = EMPTY_POWER_OFFSETS
@@ -575,7 +591,7 @@ def path_noise(
     span_rho_cut = _span_rho_cut(lengths, cfm2, cut_phi, bandwidth, 0.0)
     rho_blocks = _rho_blocks(offsets_arr, running_offsets_arr, running_rho, cfm2)
     for link_pos in range(link_count):
-        gsnr, ase, nli = _accumulate_spans(
+        gsnr, ase, nli, sci, xci = _accumulate_spans(
             int(offsets_arr[link_pos]),
             int(offsets_arr[link_pos + 1]),
             np.asarray(span_lengths_km, dtype=np.float64),
@@ -605,6 +621,9 @@ def path_noise(
         link_gsnr[link_pos] = gsnr
         link_ase[link_pos] = ase
         link_nli[link_pos] = nli
+        if split_nli:
+            link_sci[link_pos] = sci
+            link_xci[link_pos] = xci
         acc_gsnr += gsnr
         acc_ase += ase
         acc_nli += nli
@@ -617,6 +636,18 @@ def path_noise(
         acc_gsnr += (nli_scale - 1.0) * acc_nli_raw
         acc_nli *= nli_scale
     acc_gsnr += extra_nsr
+    if split_nli:
+        return (
+            link_gsnr,
+            link_ase,
+            link_nli,
+            acc_gsnr,
+            acc_ase,
+            acc_nli,
+            worst_link_nli_share,
+            link_sci,
+            link_xci,
+        )
     return link_gsnr, link_ase, link_nli, acc_gsnr, acc_ase, acc_nli, worst_link_nli_share
 
 

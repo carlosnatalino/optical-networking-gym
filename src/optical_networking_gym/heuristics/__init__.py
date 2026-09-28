@@ -1,3 +1,4 @@
+from .dispatch import HEURISTIC_NAMES, select_heuristic_action
 from .masked_heuristics import select_first_fit_action, select_random_action
 from .runtime_heuristics import (
     RuntimeHeuristicContext,
@@ -15,11 +16,13 @@ from .runtime_heuristics import (
 )
 
 __all__ = [
+    "HEURISTIC_NAMES",
     "RuntimeHeuristicContext",
     "build_runtime_heuristic_context",
     "select_disruption_aware_first_fit_action",
     "select_first_fit_action",
     "select_first_fit_runtime_action",
+    "select_heuristic_action",
     "select_highest_snr_first_fit_runtime_action",
     "select_jocn_ls_bm_ksp_action",
     "select_jocn_bm_ksp_lb_action",

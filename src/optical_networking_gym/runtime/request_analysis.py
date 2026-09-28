@@ -204,6 +204,26 @@ class RequestAnalysis:
         return self.inspection.link_metrics
 
     @property
+    def gsnr_db_by_start(self) -> np.ndarray:
+        """GSNR (dB) of every candidate, shape ``(k_paths, modulations, slots)``
+        like ``osnr_margin_by_start``: the margin plus the threshold of the
+        format (``minimum_osnr + margin``). NaN where the QoT was not evaluated
+        (no free block, a padded path or format, or a non-GSNR constraint). The
+        margins are stored in float32, so the values carry float32 precision.
+        """
+        thresholds = np.full(self.osnr_margin_by_start.shape[1], np.nan, dtype=np.float64)
+        for offset, modulation_index in enumerate(self.modulation_indices):
+            thresholds[offset] = self.config.modulations[modulation_index].minimum_osnr + self.config.margin
+        return self.osnr_margin_by_start.astype(np.float64) + thresholds[None, :, None]
+
+    @property
+    def launch_power_dbm(self) -> float:
+        """Launch power of the request: its own value, else the scenario's."""
+        if self.request.launch_power_dbm is not None:
+            return float(self.request.launch_power_dbm)
+        return float(self.config.launch_power_dbm)
+
+    @property
     def has_valid_non_reject_action(self) -> bool:
         if self.action_mask is not None:
             return bool(self.action_mask.any())

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from itertools import islice
 from pathlib import Path
@@ -343,3 +344,54 @@ class TopologyModel:
             _canonical_pair(source_name, target_name, self.node_index_by_name)
         ]
         return self.link_by_id(link_id)
+
+    def path_from_link_ids(self, link_ids: Sequence[int], *, path_id: int = -1) -> PathRecord:
+        """A ``PathRecord`` for an arbitrary route, e.g. a sub-path or the output
+        of an external planner, given its links in the order of travel.
+
+        The nodes follow from the links (a single link is taken from its source
+        to its target). ``k`` is -1 and ``id`` is ``path_id`` (-1 by default):
+        such records are not part of :attr:`paths`, and the QoT engine and the
+        runtime state identify a path by its links, not by its id.
+
+        Raises:
+            ValueError: If the list is empty, a link id is unknown, or two
+                consecutive links do not share a node.
+        """
+        links_tuple = tuple(int(link_id) for link_id in link_ids)
+        if not links_tuple:
+            raise ValueError("a path needs at least one link")
+        for link_id in links_tuple:
+            if not 0 <= link_id < len(self.links):
+                raise ValueError(f"unknown link id {link_id}")
+        links = [self.links[link_id] for link_id in links_tuple]
+        first = links[0]
+        if len(links) == 1:
+            node_indices = [first.source_index, first.target_index]
+        else:
+            second_ends = {links[1].source_index, links[1].target_index}
+            if first.target_index in second_ends:
+                node_indices = [first.source_index, first.target_index]
+            elif first.source_index in second_ends:
+                node_indices = [first.target_index, first.source_index]
+            else:
+                raise ValueError(f"links {links_tuple[0]} and {links_tuple[1]} do not share a node")
+        for position, link in enumerate(links[1:], start=1):
+            current = node_indices[-1]
+            if link.source_index == current:
+                node_indices.append(link.target_index)
+            elif link.target_index == current:
+                node_indices.append(link.source_index)
+            else:
+                raise ValueError(
+                    f"links {links_tuple[position - 1]} and {links_tuple[position]} do not share a node"
+                )
+        return PathRecord(
+            id=path_id,
+            k=-1,
+            node_names=tuple(self.node_names[index] for index in node_indices),
+            node_indices=tuple(node_indices),
+            link_ids=links_tuple,
+            hops=len(links_tuple),
+            length_km=float(sum(link.length_km for link in links)),
+        )

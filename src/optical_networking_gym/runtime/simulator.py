@@ -75,6 +75,9 @@ class Simulator:
         # expired services are released).
         self.last_transition: StepTransition | None = None
         self.post_action_callback: Callable[[StepTransition], None] | None = None
+        # Called with the analysis of every new request (every candidate path,
+        # format and start slot, with its QoT), before the policy acts.
+        self.request_analysed_callback: Callable[[RequestAnalysis], None] | None = None
 
     @property
     def total_actions(self) -> int:
@@ -547,6 +550,8 @@ class Simulator:
         else:
             self.current_observation = self._empty_observation
         self.current_mask = self._mask_from_analysis(self.current_analysis)
+        if self.request_analysed_callback is not None:
+            self.request_analysed_callback(self.current_analysis)
 
     def _apply_action(
         self,

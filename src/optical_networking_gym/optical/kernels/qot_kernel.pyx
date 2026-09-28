@@ -7,6 +7,7 @@
 same API) for the physical model and references, and ``optical/cfm2.py`` for
 the CFM2 modulation-format correction factors."""
 
+from cpython.mem cimport PyMem_Free, PyMem_Malloc
 from libc.math cimport asinh, exp, fabs, log10, pow
 import numpy as np
 cimport numpy as cnp
@@ -158,6 +159,57 @@ cdef inline cnp.ndarray _span_terms(
     return terms
 
 
+cdef bint _prefill_link_phi(
+    const double* span_terms,
+    Py_ssize_t span_start,
+    Py_ssize_t span_end,
+    const cnp.int32_t* running_service_ids,
+    Py_ssize_t running_start,
+    Py_ssize_t running_end,
+    const double* running_center_frequencies,
+    const double* running_bandwidths,
+    int current_service_id,
+    double center_frequency,
+    double* phi_scratch,
+) noexcept nogil:
+    """Fill ``phi_scratch`` with the XCI term ``asinh(.) - asinh(.)`` of every
+    interferer of the link if all its spans share the fibre attenuation (the
+    term depends on the span only through it); return whether it did. Same
+    expression as the per-span evaluation, so the result is bit-identical."""
+    cdef Py_ssize_t span_index
+    cdef Py_ssize_t running_index
+    cdef double delta_frequency
+    cdef double running_bandwidth
+    cdef double l_eff_a_link = span_terms[span_start * N_SPAN_TERMS + TERM_L_EFF_A]
+    for span_index in range(span_start + 1, span_end):
+        if span_terms[span_index * N_SPAN_TERMS + TERM_L_EFF_A] != l_eff_a_link:
+            return False
+    for running_index in range(running_start, running_end):
+        if running_service_ids[running_index] == current_service_id:
+            continue
+        delta_frequency = running_center_frequencies[running_index] - center_frequency
+        if delta_frequency == 0.0:
+            continue
+        running_bandwidth = running_bandwidths[running_index]
+        phi_scratch[running_index - running_start] = (
+            asinh(
+                PI_SQUARED
+                * ABS_BETA_2
+                * l_eff_a_link
+                * running_bandwidth
+                * (delta_frequency + (running_bandwidth / 2.0))
+            )
+            - asinh(
+                PI_SQUARED
+                * ABS_BETA_2
+                * l_eff_a_link
+                * running_bandwidth
+                * (delta_frequency - (running_bandwidth / 2.0))
+            )
+        )
+    return True
+
+
 # The span loop runs once per (candidate start, link), so it takes raw pointers
 # (C-contiguous arrays prepared by the callers) and is ``noexcept nogil``:
 # passing typed memoryviews by value costs a struct copy and a refcount per
@@ -178,6 +230,7 @@ cdef inline void _accumulate_link_noise_impl(
     const double* running_phi_modulation,
     const double* running_launch_powers,
     const double* running_rho,
+    double* phi_scratch,
     int current_service_id,
     double center_frequency,
     double bandwidth,
@@ -190,6 +243,8 @@ cdef inline void _accumulate_link_noise_impl(
     double* out_acc_gsnr,
     double* out_acc_ase,
     double* out_acc_nli,
+    double* out_acc_sci,
+    double* out_acc_xci,
 ) noexcept nogil:
     cdef Py_ssize_t span_index
     cdef Py_ssize_t running_index
@@ -225,9 +280,40 @@ cdef inline void _accumulate_link_noise_impl(
     cdef bint use_rho = running_rho != NULL
     cdef Py_ssize_t n_link_running = running_end - running_start
     cdef const double* rho_row = NULL
+    # Optional split of the NLI into its self- (SCI) and cross-channel (XCI)
+    # parts (``out_acc_sci``/``out_acc_xci`` non-NULL, single-channel calls
+    # only). The XCI part is ``sum_phi - SCI``, taken after the interferer loop,
+    # so the loop is unchanged and the XCI is exactly 0 without interferers.
+    cdef bint split = out_acc_sci != NULL
+    cdef double acc_sci = 0.0
+    cdef double acc_xci = 0.0
+    cdef double power_sci_span
+    cdef double power_xci_span
+    cdef double nli_reference
+    # XCI term ``asinh(.) - asinh(.)`` of every interferer. It depends on the
+    # span only through the fibre attenuation, so when all spans of the link
+    # share it (the usual case) it is evaluated once per link into
+    # ``phi_scratch`` (``n_link_running`` doubles, NULL to disable) instead of
+    # once per span, with the same expression: the result is bit-identical.
+    cdef bint cache_phi = False
 
     if use_offsets:
         cut_slot = _slot_index(center_frequency, frequency_start, frequency_slot_bandwidth, n_offset_slots)
+
+    if include_nli and phi_scratch != NULL and n_link_running > 0 and span_end - span_start > 1:
+        cache_phi = _prefill_link_phi(
+            span_terms,
+            span_start,
+            span_end,
+            running_service_ids,
+            running_start,
+            running_end,
+            running_center_frequencies,
+            running_bandwidths,
+            current_service_id,
+            center_frequency,
+            phi_scratch,
+        )
 
     for span_index in range(span_start, span_end):
         row = span_terms + span_index * N_SPAN_TERMS
@@ -266,22 +352,25 @@ cdef inline void _accumulate_link_noise_impl(
                 if delta_frequency == 0.0:
                     continue
                 running_bandwidth = running_bandwidths[running_index]
-                phi = (
-                    asinh(
-                        PI_SQUARED
-                        * ABS_BETA_2
-                        * l_eff_a
-                        * running_bandwidth
-                        * (delta_frequency + (running_bandwidth / 2.0))
+                if cache_phi:
+                    phi = phi_scratch[running_index - running_start]
+                else:
+                    phi = (
+                        asinh(
+                            PI_SQUARED
+                            * ABS_BETA_2
+                            * l_eff_a
+                            * running_bandwidth
+                            * (delta_frequency + (running_bandwidth / 2.0))
+                        )
+                        - asinh(
+                            PI_SQUARED
+                            * ABS_BETA_2
+                            * l_eff_a
+                            * running_bandwidth
+                            * (delta_frequency - (running_bandwidth / 2.0))
+                        )
                     )
-                    - asinh(
-                        PI_SQUARED
-                        * ABS_BETA_2
-                        * l_eff_a
-                        * running_bandwidth
-                        * (delta_frequency - (running_bandwidth / 2.0))
-                    )
-                )
                 if use_rho:
                     # CFM2: multiplicative factor of the interferer.
                     phi *= rho_row[running_index - running_start]
@@ -313,6 +402,12 @@ cdef inline void _accumulate_link_noise_impl(
                 sum_phi += phi
 
             power_nli_span = span_nli_prefactor * l_eff * sum_phi
+            if split:
+                power_sci_span = span_nli_prefactor * l_eff * row[TERM_SUM_PHI_SELF]
+                power_xci_span = span_nli_prefactor * l_eff * (sum_phi - row[TERM_SUM_PHI_SELF])
+                nli_reference = launch_power if nominal else cut_power_fibre
+                acc_sci += power_sci_span / nli_reference
+                acc_xci += power_xci_span / nli_reference
 
         power_ase = (
             bandwidth
@@ -344,6 +439,9 @@ cdef inline void _accumulate_link_noise_impl(
     out_acc_gsnr[0] = acc_gsnr
     out_acc_ase[0] = acc_ase
     out_acc_nli[0] = acc_nli
+    if split:
+        out_acc_sci[0] = acc_sci
+        out_acc_xci[0] = acc_xci
 
 
 cdef inline bint _is_ready_f64(object values):
@@ -392,6 +490,23 @@ cdef inline cnp.ndarray _link_rho_bases(
             )
         bases_view[link_count] = total
     return bases
+
+
+cdef inline double* _phi_scratch(const cnp.int32_t[:] running_offsets, Py_ssize_t link_count) except? NULL:
+    """Scratch for the per-link XCI terms, as many doubles as the busiest link
+    (NULL when no link has interferers). The caller frees it with PyMem_Free."""
+    cdef Py_ssize_t link_pos
+    cdef Py_ssize_t largest = 0
+    cdef double* scratch
+    for link_pos in range(link_count):
+        if running_offsets[link_pos + 1] - running_offsets[link_pos] > largest:
+            largest = running_offsets[link_pos + 1] - running_offsets[link_pos]
+    if largest == 0:
+        return NULL
+    scratch = <double*> PyMem_Malloc(largest * sizeof(double))
+    if scratch == NULL:
+        raise MemoryError()
+    return scratch
 
 
 cdef inline object _as_rho(object running_rho, bint cfm2, Py_ssize_t expected):
@@ -467,6 +582,9 @@ def accumulate_link_noise(
         cut_phi,
         cut_start_distance_km,
     )
+    cdef double* scratch = <double*> PyMem_Malloc(n_running * sizeof(double)) if n_running > 0 else NULL
+    if n_running > 0 and scratch == NULL:
+        raise MemoryError()
 
     _accumulate_link_noise_impl(
         _f64_ptr(terms),
@@ -484,6 +602,7 @@ def accumulate_link_noise(
         _f64_ptr(phis),
         _f64_ptr(powers),
         _rho_ptr(rho, 0),
+        scratch,
         current_service_id,
         center_frequency,
         bandwidth,
@@ -496,7 +615,10 @@ def accumulate_link_noise(
         &acc_gsnr,
         &acc_ase,
         &acc_nli,
+        NULL,
+        NULL,
     )
+    PyMem_Free(scratch)
 
     return acc_gsnr, acc_ase, acc_nli
 
@@ -595,6 +717,8 @@ def summarize_candidate_starts(
     cdef cnp.float64_t[:] osnr_margin_view = osnr_margin
     cdef cnp.float64_t[:] nli_share_view = nli_share
     cdef cnp.float64_t[:] worst_link_nli_share_view = worst_link_nli_share_values
+    # The candidate loop cannot raise, so the scratch is freed right after it.
+    cdef double* scratch_ptr = _phi_scratch(running_offsets, link_count)
 
     for candidate_pos in range(candidate_count):
         start_slot = candidate_starts_view[candidate_pos]
@@ -631,6 +755,7 @@ def summarize_candidate_starts(
                 phis_ptr,
                 powers_ptr,
                 rho_ptr + rho_bases_view[link_pos] if rho_ptr != NULL else NULL,
+                scratch_ptr,
                 current_service_id,
                 center_frequency,
                 bandwidth,
@@ -643,6 +768,8 @@ def summarize_candidate_starts(
                 &link_acc_gsnr,
                 &link_acc_ase,
                 &link_acc_nli,
+                NULL,
+                NULL,
             )
             acc_gsnr += link_acc_gsnr
             acc_ase += link_acc_ase
@@ -665,6 +792,7 @@ def summarize_candidate_starts(
         osnr_margin_view[candidate_pos] = osnr - threshold
         nli_share_view[candidate_pos] = total_nli_share
         worst_link_nli_share_view[candidate_pos] = worst_link_nli_share
+    PyMem_Free(scratch_ptr)
 
     return meets_threshold, osnr_margin, nli_share, worst_link_nli_share_values
 
@@ -697,6 +825,7 @@ def path_noise(
     bint cfm2=False,
     double cut_phi=0.0,
     object running_rho=None,
+    bint split_nli=False,
 ):
     """Per-link and path-total NSR of one channel on one path (see ``qot_kernel.py``)."""
     cdef Py_ssize_t link_count = span_offsets.shape[0] - 1
@@ -704,6 +833,8 @@ def path_noise(
     cdef double gsnr
     cdef double ase
     cdef double nli
+    cdef double sci = 0.0
+    cdef double xci = 0.0
     cdef double share
     cdef double acc_gsnr = 0.0
     cdef double acc_ase = 0.0
@@ -713,6 +844,9 @@ def path_noise(
     cdef cnp.ndarray[cnp.float64_t, ndim=1] link_gsnr = np.zeros(link_count, dtype=np.float64)
     cdef cnp.ndarray[cnp.float64_t, ndim=1] link_ase = np.zeros(link_count, dtype=np.float64)
     cdef cnp.ndarray[cnp.float64_t, ndim=1] link_nli = np.zeros(link_count, dtype=np.float64)
+    # Per-link SCI/XCI, only allocated when requested.
+    cdef cnp.ndarray[cnp.float64_t, ndim=1] link_sci = None
+    cdef cnp.ndarray[cnp.float64_t, ndim=1] link_xci = None
     cdef const cnp.int32_t[:] span_offsets_view = span_offsets
     cdef const cnp.int32_t[:] running_offsets_view = running_offsets
     cdef cnp.ndarray lengths = _contiguous(span_lengths_km)
@@ -734,6 +868,12 @@ def path_noise(
     cdef cnp.ndarray rho_bases = _link_rho_bases(span_offsets, running_offsets, link_count, cfm2)
     cdef const Py_ssize_t[:] rho_bases_view = rho_bases
     cdef object rho = _as_rho(running_rho, cfm2, rho_bases_view[link_count])
+    cdef double* scratch
+    if split_nli:
+        link_sci = np.zeros(link_count, dtype=np.float64)
+        link_xci = np.zeros(link_count, dtype=np.float64)
+    # Nothing below raises until the scratch is freed.
+    scratch = _phi_scratch(running_offsets, link_count)
 
     for link_pos in range(link_count):
         _accumulate_link_noise_impl(
@@ -752,6 +892,7 @@ def path_noise(
             _f64_ptr(phis),
             _f64_ptr(powers),
             _rho_ptr(rho, rho_bases_view[link_pos]),
+            scratch,
             current_service_id,
             center_frequency,
             bandwidth,
@@ -764,10 +905,15 @@ def path_noise(
             &gsnr,
             &ase,
             &nli,
+            &sci if split_nli else NULL,
+            &xci if split_nli else NULL,
         )
         link_gsnr[link_pos] = gsnr
         link_ase[link_pos] = ase
         link_nli[link_pos] = nli
+        if split_nli:
+            link_sci[link_pos] = sci
+            link_xci[link_pos] = xci
         acc_gsnr += gsnr
         acc_ase += ase
         acc_nli += nli
@@ -777,10 +923,23 @@ def path_noise(
             if share > worst_link_nli_share:
                 worst_link_nli_share = share
 
+    PyMem_Free(scratch)
     if nli_scale != 1.0:
         acc_gsnr += (nli_scale - 1.0) * acc_nli_raw
         acc_nli *= nli_scale
     acc_gsnr += extra_nsr
+    if split_nli:
+        return (
+            link_gsnr,
+            link_ase,
+            link_nli,
+            acc_gsnr,
+            acc_ase,
+            acc_nli,
+            worst_link_nli_share,
+            link_sci,
+            link_xci,
+        )
     return link_gsnr, link_ase, link_nli, acc_gsnr, acc_ase, acc_nli, worst_link_nli_share
 
 

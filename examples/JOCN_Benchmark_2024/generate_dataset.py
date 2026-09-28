@@ -8,8 +8,11 @@ is saved at the moment it is established.
 The setup follows the paper's use cases (the ``jocn_benchmark`` preset):
 nobel-eu, 5 shortest paths, 320 slots of 12.5 GHz, 80 km spans with
 0.2 dB/km and 4.5 dB noise figure, bit rates {10, 40, 100, 400} Gb/s, six
-modulation formats (BPSK to 64QAM) and a flat -4 dBm launch power. The two
-default heuristics are the ones with the most divergent blocking in the
+modulation formats (BPSK to 64QAM) and a flat -4 dBm launch power. The GSNR
+is the closed-form EGN model with ASE, self-channel interference (SCI) and the
+cross-channel interference (XCI) of every lightpath established on the route
+(``nli_include_interferers=True``, as in the article), so it depends on the
+load. The two default heuristics are the ones with the most divergent blocking in the
 paper, BM-LS-KSP and LB-BM-KSP, available in the gym as ``LS-BM-KSP`` and
 ``KSP-LB-BM``.
 
@@ -23,8 +26,8 @@ Each dataset is a self-documented netCDF file (xarray, h5netcdf engine) with:
 * ``lightpath``: request, route, spectrum, launch power, modulation format and
   the GSNR with its ASE and NLI components at establishment;
 * ``lightpath x hop``: the links traversed, in order from the source (hop 0) to
-  the destination, their occupancy and each link's ASE and NLI
-  noise-to-signal ratio (per-element noise breakdown);
+  the destination, their occupancy and each link's ASE and NLI (with its SCI
+  and XCI parts) noise-to-signal ratio (per-element noise breakdown);
 * ``copropagating``: every channel sharing a traversed link at establishment
   (spectrum, bit rate, modulation format, launch power), as a ragged array
   indexed by ``copropagating_lightpath`` and ``copropagating_hop``;
@@ -33,9 +36,18 @@ Each dataset is a self-documented netCDF file (xarray, h5netcdf engine) with:
 * ``path``: every k-shortest path of the topology (nodes, links, length), with
   the gym's path ids. As in the gym, one record serves both directions of a
   node pair, so a sample's route is ``path_id`` read forwards, or backwards
-  when ``path_reversed`` is 1;
+  when ``path_reversed`` is 1. The gym's physical model is undirected
+  (lightpaths are bidirectional), so the GSNR and the per-link noise do not
+  depend on the direction;
 * ``modulation`` and ``node`` (with coordinates when the topology has them):
-  lookup tables.
+  lookup tables;
+* ``query`` (only with ``--query-fraction`` > 0): the QoT queries of the
+  RMSA. For a sampled fraction of the recorded arrivals, every candidate path
+  and modulation format at its first free (first-fit) start slot, with the
+  GSNR the environment computed for it before the heuristic decided, from the
+  ``OpticalEnv.on_request_analysed`` hook. Unlike the ``lightpath`` table,
+  these are not selected by the heuristic, so they are the population a QoT
+  estimator serves in operation.
 
 Each file is self-contained: its attributes hold the full scenario
 configuration (JSON), the original topology file and the parameters used to
@@ -101,6 +113,7 @@ class DatasetExperiment:
     seed: int | None = None
     policies: tuple[str, ...] = DEFAULT_POLICIES
     copropagating: bool = True
+    query_fraction: float = 0.0
     output_dir: Path = DEFAULT_OUTPUT_DIR
     workers: int = 1
 
@@ -112,8 +125,10 @@ class _Collected:
     lightpath: dict[str, list[Any]] = field(default_factory=dict)
     hop: dict[str, list[Any]] = field(default_factory=dict)
     copropagating: dict[str, list[Any]] = field(default_factory=dict)
+    query: dict[str, list[Any]] = field(default_factory=dict)
     arrivals: int = 0
     accepted: int = 0
+    query_requests: int = 0
 
     def add(self, table: dict[str, list[Any]], row: dict[str, Any]) -> None:
         for key, value in row.items():
@@ -128,15 +143,75 @@ class DatasetEnv(OpticalEnv):
     """RMSA environment that records every accepted lightpath after the warm-up.
 
     The sample is built in :meth:`on_action_applied`, while the network state is
-    the one the new lightpath sees at establishment.
+    the one the new lightpath sees at establishment. With ``query_fraction`` >
+    0, :meth:`on_request_analysed` also records the QoT queries of a sampled
+    fraction of the arrivals (drawn from a dedicated RNG, so the traffic is the
+    same with and without queries).
     """
 
-    def __init__(self, config, topology, *, warmup: int, copropagating: bool) -> None:
+    def __init__(
+        self,
+        config,
+        topology,
+        *,
+        warmup: int,
+        copropagating: bool,
+        query_fraction: float = 0.0,
+    ) -> None:
         super().__init__(config, topology, episode_length=config.episode_length)
+        if not 0.0 <= query_fraction <= 1.0:
+            raise ValueError("query_fraction must be in [0, 1]")
         self.warmup = warmup
         self.capture_copropagating = copropagating
+        self.query_fraction = float(query_fraction)
+        self._query_rng = np.random.default_rng([int(config.seed or 0), 0x5159])
         self.collected = _Collected()
         self._modulation_index = {m.name: i for i, m in enumerate(config.modulations)}
+
+    def on_request_analysed(self, analysis) -> None:
+        if self.query_fraction <= 0.0 or analysis.request.request_index < self.warmup:
+            return
+        if self.query_fraction < 1.0 and self._query_rng.random() >= self.query_fraction:
+            return
+        self.collected.query_requests += 1
+        self._record_queries(analysis)
+
+    def _record_queries(self, analysis) -> None:
+        """Every candidate path and format at its first-fit start slot."""
+        request = analysis.request
+        config = self.simulator.config
+        gsnr_db = analysis.gsnr_db_by_start
+        launch_power_dbm = analysis.launch_power_dbm
+        for path_index, path in enumerate(analysis.paths):
+            reversed_route = int(path.node_indices[0] != request.source_id)
+            for offset, modulation_index in enumerate(analysis.modulation_indices):
+                free_starts = np.flatnonzero(analysis.resource_valid_starts[path_index, offset])
+                if free_starts.size == 0:
+                    continue
+                slot = int(free_starts[0])
+                gsnr = float(gsnr_db[path_index, offset, slot])
+                if math.isnan(gsnr):
+                    continue
+                modulation = config.modulations[modulation_index]
+                self.collected.add(
+                    self.collected.query,
+                    {
+                        "request_index": request.request_index,
+                        "source": request.source_id,
+                        "destination": request.destination_id,
+                        "bit_rate": request.bit_rate,
+                        "path_id": path.id,
+                        "path_reversed": reversed_route,
+                        "path_k": path.k,
+                        "modulation_index": modulation_index,
+                        "slot_start": slot,
+                        "n_slots": int(analysis.required_slots_by_path_mod[path_index, offset]),
+                        "launch_power_dbm": launch_power_dbm,
+                        "gsnr_db": gsnr,
+                        "gsnr_margin_db": gsnr - modulation.minimum_osnr,
+                        "qot_feasible": int(analysis.qot_valid_starts[path_index, offset, slot]),
+                    },
+                )
 
     def on_action_applied(self, transition: StepTransition) -> None:
         if transition.request.request_index < self.warmup:
@@ -166,8 +241,14 @@ class DatasetEnv(OpticalEnv):
             raise ValueError(f"route of service {service_id} does not start or end at its source")
         traversal = tuple(reversed(path.link_ids)) if reversed_route else tuple(path.link_ids)
         noise_by_link = {
-            link_id: (float(ase), float(nli))
-            for link_id, ase, nli in zip(breakdown.link_ids, breakdown.link_ase_nsr, breakdown.link_nli_nsr)
+            link_id: (float(ase), float(nli), float(sci), float(xci))
+            for link_id, ase, nli, sci, xci in zip(
+                breakdown.link_ids,
+                breakdown.link_ase_nsr,
+                breakdown.link_nli_nsr,
+                breakdown.link_sci_nsr,
+                breakdown.link_xci_nsr,
+            )
         }
         self.collected.add(
             self.collected.lightpath,
@@ -207,6 +288,8 @@ class DatasetEnv(OpticalEnv):
                     "link_id": link_id,
                     "link_ase_nsr": noise_by_link[link_id][0],
                     "link_nli_nsr": noise_by_link[link_id][1],
+                    "link_sci_nsr": noise_by_link[link_id][2],
+                    "link_xci_nsr": noise_by_link[link_id][3],
                     "link_occupancy": float(np.mean(state.slot_allocation[link_id] != -1)),
                     "link_copropagating": len(others),
                 },
@@ -251,7 +334,11 @@ def build_env(experiment: DatasetExperiment) -> DatasetEnv:
         default_noise_figure_db=config.default_noise_figure_db,
     )
     return DatasetEnv(
-        config, topology, warmup=experiment.warmup, copropagating=experiment.copropagating
+        config,
+        topology,
+        warmup=experiment.warmup,
+        copropagating=experiment.copropagating,
+        query_fraction=experiment.query_fraction,
     )
 
 
@@ -303,7 +390,7 @@ def build_dataset(env: DatasetEnv, collected: _Collected, policy: str, attrs: di
         "center_frequency_hz": lp_var("center_frequency_hz", np.float64, "Hz", "Centre frequency."),
         "bandwidth_hz": lp_var("bandwidth_hz", np.float64, "Hz", "Occupied bandwidth."),
         "launch_power_dbm": lp_var("launch_power_dbm", np.float32, "dBm", "Launch power per channel."),
-        "gsnr_db": lp_var("gsnr_db", np.float64, "dB", "GSNR at establishment (ASE + NLI, EGN model)."),
+        "gsnr_db": lp_var("gsnr_db", np.float64, "dB", "GSNR at establishment (ASE + NLI: SCI and the XCI of the lightpaths established on the route; closed-form EGN model)."),
         "snr_ase_db": lp_var("snr_ase_db", np.float64, "dB", "SNR considering only ASE noise."),
         "snr_nli_db": lp_var("snr_nli_db", np.float64, "dB", "SNR considering only nonlinear interference."),
         "gsnr_margin_db": lp_var("gsnr_margin_db", np.float64, "dB", "GSNR minus the threshold of the chosen modulation format."),
@@ -327,6 +414,8 @@ def build_dataset(env: DatasetEnv, collected: _Collected, policy: str, attrs: di
         "hop_link": hop_var("link_id", np.int16, -1, "1", "Link traversed at each hop, from the source (hop 0) to the destination (index into `link`); -1 beyond the route."),
         "hop_ase_nsr": hop_var("link_ase_nsr", np.float64, np.nan, "1", "ASE noise-to-signal ratio (linear) of the link."),
         "hop_nli_nsr": hop_var("link_nli_nsr", np.float64, np.nan, "1", "NLI noise-to-signal ratio (linear) of the link."),
+        "hop_sci_nsr": hop_var("link_sci_nsr", np.float64, np.nan, "1", "Self-channel part of the NLI of the link (linear NSR)."),
+        "hop_xci_nsr": hop_var("link_xci_nsr", np.float64, np.nan, "1", "Cross-channel part of the NLI of the link (linear NSR; hop_sci_nsr + hop_xci_nsr = hop_nli_nsr)."),
         "hop_occupancy": hop_var("link_occupancy", np.float32, np.nan, "1", "Fraction of occupied slots on the link at establishment."),
         "hop_copropagating": hop_var("link_copropagating", np.int16, -1, "1", "Other lightpaths on the link at establishment."),
     }
@@ -346,6 +435,30 @@ def build_dataset(env: DatasetEnv, collected: _Collected, policy: str, attrs: di
             "copropagating_bit_rate": cp_var("bit_rate", np.int16, "Gb/s", "Bit rate of the channel."),
             "copropagating_modulation_index": cp_var("modulation_index", np.int8, "1", "Modulation format of the channel (index into `modulation`)."),
             "copropagating_launch_power_dbm": cp_var("launch_power_dbm", np.float32, "dBm", "Launch power of the channel."),
+        }
+
+    # QoT queries of the RMSA (first-fit slot of every candidate path and format).
+    queries = collected.query
+
+    def query_var(name: str, dtype: Any, units: str, description: str):
+        return xr.Variable(("query",), _array(queries.get(name, []), dtype), {"units": units, "description": description})
+
+    if env.query_fraction > 0.0:
+        data_vars |= {
+            "query_request_index": query_var("request_index", np.int64, "1", "Arrival index of the request (joins `request_index` of the lightpath table)."),
+            "query_source": query_var("source", np.int16, "1", "Source node (index into `node`)."),
+            "query_destination": query_var("destination", np.int16, "1", "Destination node (index into `node`)."),
+            "query_bit_rate": query_var("bit_rate", np.int16, "Gb/s", "Requested bit rate."),
+            "query_path_id": query_var("path_id", np.int32, "1", "Candidate route (index into `path`)."),
+            "query_path_reversed": query_var("path_reversed", np.int8, "1", "1 if the route is traversed backwards (source is the path's last node)."),
+            "query_path_k": query_var("path_k", np.int8, "1", "Rank of the route among the k shortest paths (0 = shortest)."),
+            "query_modulation_index": query_var("modulation_index", np.int8, "1", "Candidate modulation format (index into `modulation`)."),
+            "query_slot_start": query_var("slot_start", np.int16, "1", "First free (first-fit) start slot of the candidate."),
+            "query_n_slots": query_var("n_slots", np.int16, "1", "Number of frequency slots of the candidate."),
+            "query_launch_power_dbm": query_var("launch_power_dbm", np.float32, "dBm", "Launch power per channel."),
+            "query_gsnr_db": query_var("gsnr_db", np.float64, "dB", "GSNR computed by the environment before the decision (float32 precision)."),
+            "query_gsnr_margin_db": query_var("gsnr_margin_db", np.float64, "dB", "GSNR minus the threshold of the candidate modulation format."),
+            "query_qot_feasible": query_var("qot_feasible", np.int8, "1", "1 if the candidate meets the GSNR threshold (plus the scenario margin)."),
         }
 
     # Static description of the network.
@@ -387,6 +500,15 @@ def build_dataset(env: DatasetEnv, collected: _Collected, policy: str, attrs: di
         "lightpaths_accepted": collected.accepted,
         "blocking_ratio": 1.0 - collected.accepted / collected.arrivals if collected.arrivals else float("nan"),
         "ragged_arrays": "copropagating_* rows belong to lightpath copropagating_lightpath at hop copropagating_hop",
+        # QoT model settings (also in scenario_config_json), stated explicitly.
+        "qot_constraint": str(config.qot_constraint),
+        "qot_nli_include_interferers": int(
+            config.measure_disruptions if config.nli_include_interferers is None else config.nli_include_interferers
+        ),
+        "qot_nli_interferer_psd": str(config.nli_interferer_psd),
+        "qot_nli_modulation_correction": str(config.nli_modulation_correction),
+        "qot_direction": "undirected: GSNR of the route in its canonical direction (lower node index first), for both directions",
+        "qot_query_requests": collected.query_requests,
         # Everything needed to rebuild the gym objects (see ``load_topology``).
         "scenario_config_json": scenario_config_json(config),
         "topology_id": config.topology_id,
@@ -589,6 +711,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=None, help="Traffic seed (default: preset seed).")
     parser.add_argument("--policies", nargs="+", default=list(DEFAULT_POLICIES))
     parser.add_argument("--no-copropagating", action="store_true", help="Skip the co-propagating table.")
+    parser.add_argument(
+        "--query-fraction",
+        type=float,
+        default=0.0,
+        help="Fraction of the recorded arrivals whose QoT queries are saved (0 = no query table).",
+    )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--workers", type=int, default=1, help="Policies generated in parallel.")
     return parser
@@ -606,6 +734,7 @@ def main() -> None:
             seed=args.seed,
             policies=tuple(args.policies),
             copropagating=not args.no_copropagating,
+            query_fraction=args.query_fraction,
             output_dir=args.output_dir,
             workers=args.workers,
         )

@@ -33,6 +33,7 @@ from .envs.optical_env import OpticalEnv
 from .features.action_mask import ActionMask
 from .features.observation import Observation
 from .features.reward_function import RewardFunction
+from .heuristics.dispatch import HEURISTIC_NAMES, select_heuristic_action
 from .heuristics.masked_heuristics import select_first_fit_action, select_random_action
 from .heuristics.runtime_heuristics import (
     RuntimeHeuristicContext,
@@ -79,6 +80,7 @@ __all__ = [
     "Allocation",
     "BUILTIN_TOPOLOGY_DIR",
     "CandidateRewardMetrics",
+    "HEURISTIC_NAMES",
     "Link",
     "MODULATION_CATALOG",
     "MaskMode",
@@ -143,6 +145,7 @@ __all__ = [
     "select_disruption_aware_first_fit_action",
     "select_first_fit_action",
     "select_first_fit_action_from_env",
+    "select_heuristic_action",
     "select_first_fit_runtime_action",
     "select_highest_snr_first_fit_runtime_action",
     "select_jocn_bm_ksp_lb_action",

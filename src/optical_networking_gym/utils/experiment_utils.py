@@ -13,6 +13,7 @@ from typing import Any, Callable, SupportsFloat, SupportsInt, cast
 
 import numpy as np
 
+from optical_networking_gym.heuristics.dispatch import select_heuristic_action
 from optical_networking_gym import (
     BUILTIN_TOPOLOGY_DIR,
     OpticalEnv,
@@ -21,14 +22,6 @@ from optical_networking_gym import (
     make_env,
     select_disruption_aware_first_fit_action,
     select_first_fit_action,
-    select_highest_snr_first_fit_runtime_action,
-    select_jocn_ls_bm_ksp_action,
-    select_jocn_bm_ksp_lb_action,
-    select_jocn_ksp_lb_bm_action,
-    select_ksp_best_mod_last_fit_runtime_action,
-    select_load_balancing_runtime_action,
-    select_lowest_fragmentation_runtime_action,
-    select_random_runtime_action,
 )
 
 
@@ -286,30 +279,8 @@ def select_disruption_aware_first_fit_policy(env: OpticalEnv, info: dict[str, ob
 
 
 def select_policy_action(policy_name: str, env: OpticalEnv, info: dict[str, object]) -> int:
-    key = policy_name.strip().lower()
-    if key in {"jocn_ksp_ff_bm", "ksp-ff-bm", "strategy_1", "1"}:
-        return select_masked_first_fit_policy(env, info)
-    if key in {"jocn_ls_bm_ksp", "ls-bm-ksp", "strategy_2", "2"}:
-        return int(select_jocn_ls_bm_ksp_action(env.heuristic_context()))
-    if key in {"jocn_bm_ksp_lb", "bm-ksp-lb", "strategy_3", "3"}:
-        return int(select_jocn_bm_ksp_lb_action(env.heuristic_context()))
-    if key in {"jocn_ksp_lb_bm", "ksp-lb-bm", "strategy_4", "4"}:
-        return int(select_jocn_ksp_lb_bm_action(env.heuristic_context()))
-    if key in {"first_fit", "ksp-ff-bm"}:
-        return select_masked_first_fit_policy(env, info)
-    if key in {"disruption_aware_first_fit", "disruption-aware-first-fit"}:
-        return int(select_disruption_aware_first_fit_action(env.heuristic_context()))
-    if key in {"random", "random_runtime"}:
-        return int(select_random_runtime_action(env.heuristic_context()))
-    if key in {"load_balancing", "load-balancing"}:
-        return int(select_load_balancing_runtime_action(env.heuristic_context()))
-    if key in {"lowest_fragmentation", "lowest-fragmentation"}:
-        return int(select_lowest_fragmentation_runtime_action(env.heuristic_context()))
-    if key in {"highest_snr_first_fit", "highest-snr-first-fit"}:
-        return int(select_highest_snr_first_fit_runtime_action(env.heuristic_context()))
-    if key in {"ksp_best_mod_last_fit", "ksp-best-mod-last-fit"}:
-        return int(select_ksp_best_mod_last_fit_runtime_action(env.heuristic_context()))
-    raise ValueError(f"unsupported policy_name {policy_name!r}")
+    """Action of the heuristic ``policy_name`` (see ``heuristics.select_heuristic_action``)."""
+    return select_heuristic_action(policy_name, env, info)
 
 
 def episode_modulation_counts(

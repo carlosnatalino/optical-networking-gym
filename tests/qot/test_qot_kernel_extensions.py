@@ -374,3 +374,65 @@ def test_path_noise_matches_python_twin_and_summary() -> None:
 def test_summary_defaults_match_python_twin_exactly() -> None:
     for compiled, python in zip(_summarize(compiled_kernel), _summarize(python_kernel)):
         np.testing.assert_allclose(compiled, python, rtol=1e-12)
+
+
+@pytest.mark.parametrize("psd_actual", [False, True])
+def test_per_link_xci_terms_are_bit_identical_to_per_span_evaluation(psd_actual: bool) -> None:
+    # With a uniform attenuation the XCI asinh terms are evaluated once per
+    # link; single-span calls always evaluate them per span. Summed in the same
+    # order, both give the same bits.
+    rng = np.random.default_rng(31)
+    lengths, attenuation, noise_figure = _link(4)
+    running = _running(8, rng)
+    losses = np.array([1.0, 10**0.05, 1.0, 10**0.02])
+    kwargs = dict(
+        current_service_id=0,
+        center_frequency=F_START + SLOT * 152,
+        bandwidth=SLOT * 4,
+        launch_power=1e-3,
+        include_nli=True,
+        running_launch_powers=running["powers"],
+        interferer_psd_actual=psd_actual,
+    )
+    args = (running["ids"], running["freqs"], running["bw"], running["phi"])
+    whole = compiled_kernel.accumulate_link_noise(
+        lengths, attenuation, noise_figure, *args, span_input_loss=losses, **kwargs
+    )
+    per_span = [0.0, 0.0, 0.0]
+    for index in range(lengths.shape[0]):
+        part = compiled_kernel.accumulate_link_noise(
+            lengths[index : index + 1],
+            attenuation[index : index + 1],
+            noise_figure[index : index + 1],
+            *args,
+            span_input_loss=losses[index : index + 1],
+            **kwargs,
+        )
+        per_span = [total + value for total, value in zip(per_span, part)]
+    assert tuple(whole) == tuple(per_span)
+
+
+def test_mixed_attenuation_within_a_link_matches_python_twin() -> None:
+    # Spans of different fibres in one link: the per-span evaluation is used.
+    rng = np.random.default_rng(32)
+    lengths, attenuation, noise_figure = _link(4)
+    attenuation = attenuation * np.array([1.0, 1.1, 1.0, 0.9])
+    running = _running(8, rng)
+    results = [
+        kernel.accumulate_link_noise(
+            lengths,
+            attenuation,
+            noise_figure,
+            running["ids"],
+            running["freqs"],
+            running["bw"],
+            running["phi"],
+            current_service_id=0,
+            center_frequency=F_START + SLOT * 152,
+            bandwidth=SLOT * 4,
+            launch_power=1e-3,
+            include_nli=True,
+        )
+        for kernel in (compiled_kernel, python_kernel)
+    ]
+    np.testing.assert_allclose(results[0], results[1], rtol=1e-12)
