@@ -11,6 +11,7 @@ MASKED_FIRST_FIT_PATH = PROJECT_ROOT / "examples" / "heuristics" / "masked_first
 MASKED_RANDOM_PATH = PROJECT_ROOT / "examples" / "heuristics" / "masked_random.py"
 RUNTIME_FIRST_FIT_PATH = PROJECT_ROOT / "examples" / "heuristics" / "runtime_first_fit.py"
 RUNTIME_RANDOM_PATH = PROJECT_ROOT / "examples" / "heuristics" / "runtime_random.py"
+DISRUPTION_AWARE_PATH = PROJECT_ROOT / "examples" / "heuristics" / "disruption_aware_first_fit.py"
 
 
 def _run_example(path: Path) -> dict[str, object]:
@@ -68,3 +69,23 @@ def test_runtime_random_example_runs_without_action_mask() -> None:
     assert summary["mode"] == "runtime"
     assert summary["policy"] == "random"
     assert summary["steps"] == 12
+
+
+def test_disruption_aware_example_avoids_disruptions_that_first_fit_causes() -> None:
+    run_episode = runpy.run_path(str(DISRUPTION_AWARE_PATH))["run_episode"]
+
+    first_fit = run_episode(seed=7, policy="first_fit", load=400.0, episode_length=30)
+    aware = run_episode(seed=7, policy="disruption_aware", load=400.0, episode_length=30)
+
+    assert first_fit["steps"] == aware["steps"] == 30
+    assert first_fit["disrupted_services"] > 0
+    assert first_fit["dropped_services"] == first_fit["disrupted_services"]
+    assert aware["disrupted_services"] == 0
+    assert aware["dropped_services"] == 0
+
+
+def test_disruption_aware_example_rejects_unknown_policy() -> None:
+    run_episode = runpy.run_path(str(DISRUPTION_AWARE_PATH))["run_episode"]
+
+    with pytest.raises(ValueError, match="policy must be one of"):
+        run_episode(policy="best_fit")
