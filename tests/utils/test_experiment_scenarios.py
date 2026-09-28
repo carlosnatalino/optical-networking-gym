@@ -253,3 +253,9 @@ def test_jocn_benchmark_scenario_matches_article_profile() -> None:
     assert tuple(modulation.minimum_osnr for modulation in scenario.modulations) == pytest.approx(
         (3.71, 6.72, 10.84, 13.24, 16.16, 19.01)
     )
+    # The article's GSNR includes the XCI of the established lightpaths (the
+    # v1 engine always summed the running services of every link).
+    assert scenario.qot_constraint == "ASE+NLI"
+    assert scenario.nli_include_interferers is True
+    assert scenario.nli_interferer_psd == "cut"
+    assert scenario.measure_disruptions is False

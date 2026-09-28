@@ -9,6 +9,7 @@ import gymnasium as gym
 from optical_networking_gym.contracts import StepTransition
 from optical_networking_gym.network.topology import TopologyModel
 from optical_networking_gym.config.scenario import ScenarioConfig
+from optical_networking_gym.runtime.request_analysis import RequestAnalysis
 from optical_networking_gym.runtime.simulator import Simulator
 
 
@@ -27,6 +28,13 @@ class OpticalEnv(gym.Env):
       expired services are released). Use it to record quantities that are only
       meaningful at that instant, e.g. the state seen by a newly established
       lightpath.
+    * :meth:`on_request_analysed` is called with the
+      :class:`~optical_networking_gym.runtime.request_analysis.RequestAnalysis`
+      of every new request, before the policy acts: the candidate paths,
+      formats and start slots with the QoT the environment computed for them
+      (e.g. to log the QoT queries of the RMSA, the unestablished lightpaths a
+      QoT estimator serves in operation). It is only wired when a subclass
+      overrides it, so the default costs nothing.
     """
 
     metadata = {"render_modes": ["human"]}
@@ -49,6 +57,8 @@ class OpticalEnv(gym.Env):
             capture_step_trace=capture_step_trace,
         )
         self.simulator.post_action_callback = self.on_action_applied
+        if type(self).on_request_analysed is not OpticalEnv.on_request_analysed:
+            self.simulator.request_analysed_callback = self.on_request_analysed
         self.action_space = gym.spaces.Discrete(self.simulator.total_actions)
         observation_shape = (
             (0,)
@@ -79,6 +89,19 @@ class OpticalEnv(gym.Env):
 
     def on_action_applied(self, transition: StepTransition) -> None:
         """Hook called right after each action is applied (no-op by default)."""
+        return None
+
+    def on_request_analysed(self, analysis: RequestAnalysis) -> None:
+        """Hook called with the analysis of each new request, before the policy
+        acts (no-op by default).
+
+        ``analysis.paths``, ``analysis.modulation_indices`` and
+        ``analysis.required_slots_by_path_mod`` describe the candidates;
+        ``analysis.resource_valid_starts`` marks the free start slots and
+        ``analysis.gsnr_db_by_start``/``osnr_margin_by_start`` hold their QoT
+        (NaN where not evaluated). The state is ``self.simulator.state``, at
+        the arrival of the request.
+        """
         return None
 
     def action_masks(self) -> np.ndarray | None:

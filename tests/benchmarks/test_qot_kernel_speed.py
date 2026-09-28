@@ -1,5 +1,7 @@
-"""Speed guard for the QoT kernel: the CFM2 modulation-format correction must not
-slow the hot paths down relative to the default closed-form EGN correction.
+"""Speed guards for the QoT kernel: the CFM2 modulation-format correction, its
+per-span distances (direction of travel) and the SCI/XCI split must not slow the
+hot paths down, and the per-link evaluation of the XCI terms must stay
+effective.
 
 Timings are relative (same process, same inputs, best of N), so the guard does
 not depend on the machine speed. It only runs against the compiled kernel.
@@ -132,3 +134,81 @@ def test_cfm2_single_channel_is_not_slower() -> None:
     legacy = _best_time(run(), repeats=50, inner=20)
     cfm2 = _best_time(run(**_cfm2_kwargs(inputs)), repeats=50, inner=20)
     assert cfm2 <= MAX_SLOWDOWN * legacy, f"CFM2 {cfm2 * 1e6:.1f} us vs default {legacy * 1e6:.1f} us"
+
+
+def _batch(inputs: dict[str, np.ndarray], attenuation: np.ndarray | None = None, **extra: object) -> Callable[[], object]:
+    starts = np.arange(0, 316, 2, dtype=np.int32)
+    return lambda: qot_kernel.summarize_candidate_starts(
+        inputs["span_offsets"],
+        inputs["lengths"],
+        inputs["attenuation"] if attenuation is None else attenuation,
+        inputs["noise_figure"],
+        inputs["running_offsets"],
+        inputs["ids"],
+        inputs["freqs"],
+        inputs["bw"],
+        inputs["phi"],
+        starts,
+        current_service_id=0,
+        frequency_start=F_START,
+        frequency_slot_bandwidth=SLOT,
+        service_num_slots=4,
+        launch_power=1e-3,
+        threshold=10.0,
+        include_nli=True,
+        **extra,
+    )
+
+
+def test_cfm2_span_distances_are_not_slower() -> None:
+    inputs = _inputs()
+    distances = np.concatenate(([0.0], np.cumsum(inputs["lengths"][::-1])[:-1]))[::-1].copy()
+    plain = _best_time(_batch(inputs, **_cfm2_kwargs(inputs)), repeats=7, inner=3)
+    directed = _best_time(_batch(inputs, span_cut_distance_km=distances, **_cfm2_kwargs(inputs)), repeats=7, inner=3)
+    assert directed <= MAX_SLOWDOWN * plain, f"{directed * 1e3:.2f} ms vs {plain * 1e3:.2f} ms"
+
+
+def test_xci_terms_are_evaluated_once_per_link() -> None:
+    # Uniform attenuation within each link (8 spans): the asinh terms are
+    # evaluated once per link. A per-span attenuation pattern forces the
+    # per-span evaluation, which must be clearly slower.
+    inputs = _inputs()
+    mixed = inputs["attenuation"] * np.tile([1.0, 1.001], inputs["attenuation"].shape[0] // 2)
+    per_link = _best_time(_batch(inputs), repeats=7, inner=3)
+    per_span = _best_time(_batch(inputs, attenuation=mixed), repeats=7, inner=3)
+    assert per_link <= 0.5 * per_span, f"per link {per_link * 1e3:.2f} ms vs per span {per_span * 1e3:.2f} ms"
+
+
+def test_nli_split_is_not_slower() -> None:
+    inputs = _inputs()
+    n_spans = inputs["lengths"].shape[0]
+
+    def run(**extra: object) -> Callable[[], object]:
+        return lambda: qot_kernel.path_noise(
+            inputs["span_offsets"],
+            inputs["lengths"],
+            inputs["attenuation"],
+            inputs["noise_figure"],
+            np.ones(n_spans),
+            np.ones(n_spans),
+            np.zeros((n_spans, 0)),
+            inputs["running_offsets"],
+            inputs["ids"],
+            inputs["freqs"],
+            inputs["bw"],
+            inputs["phi"],
+            inputs["powers"],
+            current_service_id=0,
+            center_frequency=F_START + SLOT * 152,
+            bandwidth=4 * SLOT,
+            launch_power=1e-3,
+            include_nli=True,
+            frequency_start=F_START,
+            frequency_slot_bandwidth=SLOT,
+            interferer_psd_actual=False,
+            **extra,
+        )
+
+    plain = _best_time(run(), repeats=50, inner=20)
+    split = _best_time(run(split_nli=True), repeats=50, inner=20)
+    assert split <= MAX_SLOWDOWN * plain, f"split {split * 1e6:.1f} us vs {plain * 1e6:.1f} us"

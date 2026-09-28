@@ -13,13 +13,16 @@ kernel `optical/kernels/qot_kernel.pyx`, and its pure-Python twin
 |---|---|---|
 | `launch_power_dbm_choices`, `launch_power_seed` | `None` | Each dynamic request draws its launch power from the choices, on its own RNG stream (the traffic sequence is unchanged). |
 | `nli_interferer_psd` | `"cut"` | `"actual"` weights each interferer's XCI by its own power spectral density; `"cut"` assumes the channel-under-test PSD (historical). |
-| `nli_include_interferers` | `None` | Include XCI from established services without enabling disruption tracking (`None` follows `measure_disruptions`). |
+| `nli_include_interferers` | `None` | Include the cross-channel interference (XCI) of established services. `None` follows `measure_disruptions`, so **by default the NLI is self-channel only and the GSNR does not depend on the load**; set it to `True` for a GN/EGN model with XCI (the `jocn_benchmark` preset does). |
 | `nli_coherence_epsilon` | `0.0` | Coherent NLI accumulation: path NLI × N_spans^ε. |
 | `nli_modulation_correction` | `"egn_xci"` | Modulation-format correction of the GN model: `"egn_xci"`, `"cfm2"` or `"gn"` (see below). |
 | `roadm_add_osnr_db`, `roadm_drop_osnr_db`, `roadm_express_osnr_db`, `transceiver_osnr_db` | `None` | Constant-OSNR node and transceiver noise terms. |
 
 With every option at its default, the results are bit-identical to the
-historical engine.
+historical engine. The default keeps `nli_include_interferers` off because
+XCI makes every QoT evaluation depend on the lightpaths already established,
+which changes the results of existing studies and costs time (on nobel-eu a
+request takes about 2.5–3.5x longer to process with XCI).
 
 ## Modulation-format correction
 
@@ -46,8 +49,14 @@ of real constellations, most for low-order formats and short reaches.
 up by spectral efficiency. For CFM2 in a mesh network:
 
 - `β2,acc` is the dispersion a channel has accumulated from its own
-  transmitter to the input of span `n`, measured along the link order of its
-  path record, using the kernel's constant `|β2|` = 21.3 ps²/km.
+  transmitter to the input of span `n`, using the kernel's constant `|β2|` =
+  21.3 ps²/km. It is measured in the direction of travel: the topology keeps
+  one path record for both directions of a node pair, and a lightpath whose
+  source is the record's last node travels its links backwards
+  (`QoTEngine.travels_reversed(path, source_id)`). Within a link, spans are
+  taken in their stored order, as for every other per-span quantity.
+  CFM2 is the only direction-dependent part of the model, and the effect is
+  small (on nobel-eu about 1e-3 dB, at most 0.015 dB).
 - The occupied bandwidth stands in for the symbol rate `R_CUT`.
 - The factors were fitted for 32–128 GBaud channels and 80–120 km spans.
 - The paper's coherence (CFM3) and roll-off (CFM4) refinements are not modelled.
@@ -56,6 +65,12 @@ The CFM2 factors do not depend on the candidate frequency. `ρ_CUT` is folded
 into the per-span SCI term once per kernel call, and `ρ_nch` is computed once
 per link state and cached, so CFM2 costs the same as the default correction.
 The coefficients live in `optical/cfm2.py`.
+
+The XCI term of an interferer, `asinh(·) − asinh(·)`, depends on the span only
+through the fibre attenuation. When all spans of a link share it, the kernel
+evaluates it once per link and candidate instead of once per span, with the
+same expression, so the results are bit-identical and XCI costs roughly a
+constant per link instead of per span.
 
 ## Per-span inventory
 
@@ -81,11 +96,33 @@ heterogeneous physical layer. The engine then accounts for:
 
 `QoTEngine.noise_breakdown(...)` and `service_noise_breakdown(state,
 service_id)` return a `LightpathNoiseBreakdown`. It holds the ASE and NLI NSR
-of each link, the coherent excess, the ROADM add/express/drop and transceiver
-terms, and the total.
+of each link, the NLI split into its self-channel (`link_sci_nsr`) and
+cross-channel (`link_xci_nsr`) parts, the coherent excess, the ROADM
+add/express/drop and transceiver terms, and the total. SCI scales with the
+square of the launch power; with `nli_interferer_psd="actual"` the XCI NSR
+does not depend on it. NLI is clipped at 0 per span, the remainder being kept
+in `nli_correction_nsr`; the clip can only trigger with the default
+`"egn_xci"` correction, so with `"cfm2"` or `"gn"` the per-link sums are exact
+(up to rounding).
+
+The route is either a `PathRecord` (`path=`, with `reverse=True` for a channel
+that travels it backwards) or any sequence of links in the order of travel
+(`link_ids=`), e.g. a sub-path or the output of an external planner.
+`TopologyModel.path_from_link_ids(link_ids)` builds the matching record. The
+engine and the runtime state identify a path by its links, not by its id, so
+records that reuse an id are never confused.
 
 `OpticalEnv.observation(obs)` maps the returned observation, like gymnasium's
 `ObservationWrapper`. `OpticalEnv.on_action_applied(transition)` runs right
 after each action, before time advances, so subclasses can record the network
-state a new lightpath sees at establishment. `Simulator.last_transition` holds
-the most recent step outcome.
+state a new lightpath sees at establishment.
+`OpticalEnv.on_request_analysed(analysis)` runs for every new request before
+the policy acts, with the `RequestAnalysis` the environment built: candidate
+paths, formats (`modulation_indices`), slots (`required_slots_by_path_mod`,
+`resource_valid_starts`), `launch_power_dbm` and the GSNR of every evaluated
+candidate (`gsnr_db_by_start`, float32 precision). These are the QoT queries of
+the RMSA. The hook is only wired when a subclass overrides it.
+`Simulator.last_transition` holds the most recent step outcome.
+
+`heuristics.select_heuristic_action(name, env, info)` selects an action with a
+heuristic given by name (`HEURISTIC_NAMES` lists them).

@@ -81,6 +81,23 @@ def test_dataset_is_consistent_with_the_noise_breakdown(run_dir: Path) -> None:
     assert ds.attrs["policy_paper_name"] == "BM-LS-KSP"
 
 
+def test_dataset_gsnr_includes_the_copropagating_channels(run_dir: Path) -> None:
+    ds = _open(run_dir, "LS-BM-KSP")
+    assert ds.attrs["qot_nli_include_interferers"] == 1
+    assert ds.attrs["qot_nli_interferer_psd"] == "cut"
+    assert ds.attrs["qot_nli_modulation_correction"] == "egn_xci"
+    assert "query" not in ds.dims and ds.attrs["qot_query_requests"] == 0
+    valid = ds.hop_link.values >= 0
+    sci, xci, nli = (ds[name].values[valid] for name in ("hop_sci_nsr", "hop_xci_nsr", "hop_nli_nsr"))
+    np.testing.assert_allclose(sci + xci, nli, rtol=1e-12)
+    # XCI appears exactly on the hops shared with other lightpaths (at 210
+    # Erlang almost every hop is shared).
+    shared = ds.hop_copropagating.values[valid] > 0
+    assert shared.any()
+    assert np.all(xci[shared] > 0.0)
+    assert np.all(xci[~shared] == 0.0)
+
+
 def test_dataset_is_self_contained(script, run_dir: Path) -> None:
     ds = _open(run_dir, "KSP-LB-BM")
     # The topology object is rebuilt from the file alone.
@@ -124,3 +141,64 @@ def test_same_seed_gives_the_same_arrival_sequence_for_all_policies(run_dir: Pat
     lookup_second = dict(zip(second.request_index.values, second.source.values))
     assert common.size > 0
     assert all(lookup_first[i] == lookup_second[i] for i in common)
+
+
+@pytest.fixture(scope="module")
+def query_runs(script, tmp_path_factory) -> dict[float, Path]:
+    runs = {}
+    for fraction in (0.0, 1.0):
+        experiment = script["DatasetExperiment"](
+            arrivals=120,
+            warmup=40,
+            policies=("KSP-FF-BM",),
+            query_fraction=fraction,
+            output_dir=tmp_path_factory.mktemp(f"queries{fraction:g}"),
+        )
+        runs[fraction] = script["run"](experiment, now=datetime(2026, 1, 2, 3, 4, 5))
+    return runs
+
+
+def _open_policy(run_dir: Path, policy: str):
+    (path,) = run_dir.glob(f"jocn2024_qot_nobel-eu_210erl_{policy}_seed*_{RUN_ID}.nc")
+    return xr.open_dataset(path, engine="h5netcdf")
+
+
+def test_query_table_holds_the_qot_the_rmsa_evaluated(query_runs: dict[float, Path]) -> None:
+    ds = _open_policy(query_runs[1.0], "KSP-FF-BM")
+    assert ds.attrs["experiment_query_fraction"] == 1.0
+    assert ds.attrs["qot_query_requests"] == ds.attrs["arrivals_recorded"] == 120
+    requests = ds.query_request_index.values
+    assert requests.size > 0 and np.all(requests >= 40)
+    thresholds = ds.modulation_gsnr_threshold_db.values[ds.query_modulation_index.values]
+    np.testing.assert_allclose(ds.query_gsnr_margin_db.values, ds.query_gsnr_db.values - thresholds)
+    np.testing.assert_array_equal(ds.query_qot_feasible.values, ds.query_gsnr_db.values >= thresholds)
+    # Candidates that became lightpaths have the GSNR recorded at establishment.
+    queried = {
+        (int(r), int(p), int(m), int(s)): (g, f)
+        for r, p, m, s, g, f in zip(
+            requests,
+            ds.query_path_id.values,
+            ds.query_modulation_index.values,
+            ds.query_slot_start.values,
+            ds.query_gsnr_db.values,
+            ds.query_qot_feasible.values,
+        )
+    }
+    matches = 0
+    for r, p, m, s, g in zip(
+        ds.request_index.values, ds.path_id.values, ds.modulation_index.values, ds.slot_start.values, ds.gsnr_db.values
+    ):
+        key = (int(r), int(p), int(m), int(s))
+        if key in queried:
+            matches += 1
+            assert queried[key][0] == pytest.approx(g, abs=1e-4)  # float32 margins
+            assert queried[key][1] == 1
+    assert matches > 0
+
+
+def test_queries_do_not_change_the_traffic(query_runs: dict[float, Path]) -> None:
+    with_queries = _open_policy(query_runs[1.0], "KSP-FF-BM")
+    without = _open_policy(query_runs[0.0], "KSP-FF-BM")
+    assert "query" not in without.dims
+    np.testing.assert_array_equal(with_queries.request_index.values, without.request_index.values)
+    np.testing.assert_array_equal(with_queries.gsnr_db.values, without.gsnr_db.values)

@@ -76,13 +76,15 @@ class RuntimeState:
         self.global_state_version = 0
         self.allocation_state_version = 0
         self.link_versions = np.zeros(topology.link_count, dtype=np.int64)
-        self._path_link_indices_cache: dict[int, np.ndarray] = {}
+        self._path_link_indices_cache: dict[tuple[int, ...], np.ndarray] = {}
 
     def _get_path_link_indices(self, path: PathRecord) -> np.ndarray:
-        cached = self._path_link_indices_cache.get(path.id)
+        # Keyed by the link sequence: ``PathRecord.id`` is not unique for paths
+        # built outside the topology (sub-paths, external planners).
+        cached = self._path_link_indices_cache.get(path.link_ids)
         if cached is None:
             cached = np.asarray(path.link_ids, dtype=np.intp)
-            self._path_link_indices_cache[path.id] = cached
+            self._path_link_indices_cache[path.link_ids] = cached
         return cached
 
     def set_current_request(self, request: ServiceRequest) -> None:

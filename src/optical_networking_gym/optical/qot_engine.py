@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 import math
 
@@ -54,6 +55,8 @@ class _LinkInterferenceCache:
 
 @dataclass(slots=True)
 class _PathSummaryStaticInputs:
+    """State-independent inputs of a path, cached by its link sequence."""
+
     link_ids: tuple[int, ...]
     span_offsets: np.ndarray
     span_lengths: np.ndarray
@@ -62,10 +65,22 @@ class _PathSummaryStaticInputs:
     span_input_loss: np.ndarray
     span_output_loss: np.ndarray
     span_power_offset_db: np.ndarray
+    # Path constants (see ``QoTEngine._compute_path_terms``).
+    terms: tuple[float, float, float, float, float]
+    extra_nsr: float
+    no_running_offsets: np.ndarray
+    # CFM2 only (``None`` otherwise), indexed by direction (0: along the link
+    # order of the path, 1: reversed): distance (km) from the transmitter to
+    # the input of every span, and to the start of every link.
+    span_cut_distance_km: tuple[np.ndarray, np.ndarray] | None
+    link_start_km: tuple[dict[int, float], dict[int, float]] | None
 
 
 @dataclass(slots=True)
 class _PreparedCandidateSummaryInputs:
+    nli_scale: float
+    extra_nsr: float
+    span_cut_distance_km: np.ndarray | None
     span_offsets: np.ndarray
     span_lengths: np.ndarray
     span_attenuation: np.ndarray
@@ -99,15 +114,26 @@ class LightpathNoiseBreakdown:
 
     The GSNR is ``-10 log10(total_nsr)`` with
     ``total_nsr = sum(link_ase_nsr) + sum(link_nli_nsr) + coherent_excess_nsr
-    + roadm_add_nsr + roadm_express_nsr + roadm_drop_nsr + transceiver_nsr``.
-    (With the EGN correction a link's raw NLI can be slightly negative; the
-    per-link NLI reported here is clipped at 0 and the difference is kept in
-    ``nli_correction_nsr`` so the sum stays exact.)
+    + roadm_add_nsr + roadm_express_nsr + roadm_drop_nsr + transceiver_nsr
+    + nli_correction_nsr``.
+
+    NLI is clipped at 0 per span: with the default closed-form EGN XCI
+    correction (``nli_modulation_correction="egn_xci"``) the corrected NLI of a
+    span can in principle be negative, and the clipped remainder is kept in
+    ``nli_correction_nsr`` so the sum stays exact. With ``"cfm2"`` or ``"gn"``
+    every term is non-negative, the clip never triggers and
+    ``nli_correction_nsr`` is 0 up to floating-point rounding, so the per-link
+    sums are exact as they stand.
 
     Attributes:
-        link_ids: Links of the path, in order.
+        link_ids: Links of the path, in the order of the path record (also when
+            the lightpath travels it backwards).
         link_ase_nsr: ASE contribution of each link (incoherent sum of spans).
         link_nli_nsr: NLI contribution of each link (incoherent GN/EGN).
+        link_sci_nsr, link_xci_nsr: Self-channel (SCI) and cross-channel (XCI)
+            parts of the NLI of each link, before the clip:
+            ``link_sci_nsr + link_xci_nsr`` equals ``link_nli_nsr`` up to
+            rounding whenever no span is clipped. XCI is 0 without interferers.
         coherent_excess_nsr: Extra NLI from coherent accumulation over the path,
             ``(N_spans**epsilon - 1) * sum(raw link NLI)``.
         roadm_add_nsr, roadm_drop_nsr: Add and drop ROADM terms.
@@ -121,6 +147,8 @@ class LightpathNoiseBreakdown:
     link_ids: tuple[int, ...]
     link_ase_nsr: np.ndarray
     link_nli_nsr: np.ndarray
+    link_sci_nsr: np.ndarray
+    link_xci_nsr: np.ndarray
     coherent_excess_nsr: float
     roadm_add_nsr: float
     roadm_express_nsr: float
@@ -162,7 +190,6 @@ class QoTEngine:
             if config.nli_include_interferers is None
             else bool(config.nli_include_interferers)
         )
-        self._path_terms_cache: dict[int, tuple[float, float, float, float, float]] = {}
         self._interferer_psd_actual = config.nli_interferer_psd == "actual"
         # Modulation-format correction (see ``ScenarioConfig.nli_modulation_correction``).
         self._cfm2 = config.nli_modulation_correction == "cfm2"
@@ -180,7 +207,6 @@ class QoTEngine:
             np.concatenate(([0.0], np.cumsum(lengths[:-1]))) for lengths in self._link_span_lengths_km
         )
         self._link_length_km = tuple(float(np.sum(lengths)) for lengths in self._link_span_lengths_km)
-        self._path_link_start_km: dict[int, dict[int, float]] = {}
         self._link_span_attenuation_normalized = tuple(
             np.array([span.attenuation_normalized for span in link.spans], dtype=np.float64)
             for link in topology.links
@@ -205,7 +231,10 @@ class QoTEngine:
         )
         self._any_power_offsets = any(offsets.shape[1] > 0 for offsets in self._link_span_power_offset_db)
         self._link_interference_cache: dict[int, _LinkInterferenceCache] = {}
-        self._path_summary_static_cache: dict[int, _PathSummaryStaticInputs] = {}
+        # Keyed by the link sequence, not ``PathRecord.id``: a path's QoT inputs
+        # depend only on its links, and ids are not unique outside the
+        # topology's k-shortest paths (sub-paths, external planners).
+        self._path_summary_static_cache: dict[tuple[int, ...], _PathSummaryStaticInputs] = {}
 
     def _span_power_offsets(self, spans: tuple[Span, ...]) -> np.ndarray:
         """Channel-power offset (dB) at each span input due to EDFA gain ripple.
@@ -230,30 +259,30 @@ class QoTEngine:
         return offsets
 
     def _path_terms(self, path: PathRecord) -> tuple[float, float, float, float, float]:
+        """Path constants: (nli_scale, add, express-total, drop, transceiver) NSR."""
+        return self._path_summary_static_inputs(path).terms
+
+    def _compute_path_terms(self, link_ids: tuple[int, ...]) -> tuple[float, float, float, float, float]:
         """Path constants: (nli_scale, add, express-total, drop, transceiver) NSR.
 
         ``nli_scale = N_spans**epsilon`` models coherent NLI accumulation, since
         the NLI of ``N`` identical spans grows as ``N**(1+epsilon)`` instead of
         ``N`` [Poggiolini_2012_GNModelNonLinear]. Node terms are constant-OSNR
         contributions, as GNPy's ROADM ``add_drop_osnr`` and transceiver
-        ``tx_osnr`` [Curri_2022_GNPyModelPhysical].
+        ``tx_osnr`` [Curri_2022_GNPyModelPhysical]; a path of ``n`` links has
+        ``n - 1`` express nodes.
         """
-        cached = self._path_terms_cache.get(path.id)
-        if cached is not None:
-            return cached
         config = self.config
-        n_spans = sum(int(self._link_span_lengths_km[link_id].shape[0]) for link_id in path.link_ids)
+        n_spans = sum(int(self._link_span_lengths_km[link_id].shape[0]) for link_id in link_ids)
         nli_scale = float(n_spans**config.nli_coherence_epsilon) if n_spans > 0 else 1.0
-        n_express = max(len(path.node_names) - 2, 0)
-        terms = (
+        n_express = max(len(link_ids) - 1, 0)
+        return (
             nli_scale,
             _osnr_db_to_nsr(config.roadm_add_osnr_db),
             n_express * _osnr_db_to_nsr(config.roadm_express_osnr_db),
             _osnr_db_to_nsr(config.roadm_drop_osnr_db),
             _osnr_db_to_nsr(config.transceiver_osnr_db),
         )
-        self._path_terms_cache[path.id] = terms
-        return terms
 
     def _cut_phi(self, modulation: Modulation | None) -> float:
         """``Phi`` of the channel under test, used only by CFM2 (0 otherwise)."""
@@ -263,43 +292,87 @@ class QoTEngine:
             raise ValueError("the CFM2 modulation-format correction needs the lightpath's modulation")
         return _modulation_phi(modulation)
 
-    def _link_start_km(self, path: PathRecord, link_id: int) -> float:
-        """Distance (km) from the start of ``path`` to the start of ``link_id``,
-        along the link order of the path record (CFM2 accumulated dispersion)."""
-        starts = self._path_link_start_km.get(path.id)
-        if starts is None:
-            starts = {}
-            distance_km = 0.0
-            for path_link_id in path.link_ids:
-                starts[path_link_id] = distance_km
-                distance_km += self._link_length_km[path_link_id]
-            self._path_link_start_km[path.id] = starts
-        return starts[link_id]
+    @staticmethod
+    def travels_reversed(path: PathRecord, source_id: int) -> bool:
+        """Whether a lightpath from ``source_id`` traverses ``path`` backwards.
 
-    def _path_scale_and_extra(self, path: PathRecord) -> tuple[float, float]:
-        nli_scale, add, express, drop, transceiver = self._path_terms(path)
-        return nli_scale, add + express + drop + transceiver
+        The topology keeps one ``PathRecord`` for both directions of a node
+        pair, so a request whose source is the record's last node travels its
+        links in reverse order. Paths that do not end at ``source_id`` are
+        taken as forward.
+        """
+        node_indices = path.node_indices
+        return bool(node_indices) and node_indices[0] != source_id and node_indices[-1] == source_id
+
+    def _cfm2_reversed(self, path: PathRecord, source_id: int) -> bool:
+        """Direction passed to the kernel: only CFM2 depends on it."""
+        return self._cfm2 and self.travels_reversed(path, source_id)
+
+    def _link_start_km(self, path: PathRecord, link_id: int, reverse: bool = False) -> float:
+        """Distance (km) from the transmitter to the start of ``link_id``, in the
+        direction of travel (CFM2 accumulated dispersion)."""
+        starts = self._path_summary_static_inputs(path).link_start_km
+        assert starts is not None  # CFM2 only
+        return starts[1 if reverse else 0][link_id]
+
+    def _cfm2_distances(
+        self, link_ids: tuple[int, ...], span_offsets: np.ndarray, reverse: bool
+    ) -> tuple[np.ndarray, dict[int, float]]:
+        """CFM2 distances from the transmitter when the links of a path are
+        travelled forwards or backwards: to every span input (accumulated span
+        by span, as the kernel does) and to every link start (sum of link
+        lengths). The spans of a link are taken in their stored order, as for
+        every other per-span quantity of the engine. The forward values are the
+        historical ones, bit for bit."""
+        span_distance_km = np.empty(int(span_offsets[-1]), dtype=np.float64)
+        link_start_km: dict[int, float] = {}
+        positions = range(len(link_ids) - 1, -1, -1) if reverse else range(len(link_ids))
+        distance_km = 0.0
+        link_distance_km = 0.0
+        for position in positions:
+            link_id = link_ids[position]
+            link_start_km[link_id] = link_distance_km
+            link_distance_km += self._link_length_km[link_id]
+            cursor = int(span_offsets[position])
+            for length_km in self._link_span_lengths_km[link_id]:
+                span_distance_km[cursor] = distance_km
+                distance_km += float(length_km)
+                cursor += 1
+        return span_distance_km, link_start_km
 
     def noise_breakdown(
         self,
         state: RuntimeState,
         *,
-        path: PathRecord,
+        path: PathRecord | None = None,
         service_id: int,
         center_frequency: float,
         bandwidth: float,
         launch_power: float,
         modulation: Modulation | None = None,
+        reverse: bool = False,
+        link_ids: Sequence[int] | None = None,
     ) -> LightpathNoiseBreakdown:
         """Per-element noise breakdown of a channel on a path (Cython kernel).
 
+        The route is either ``path`` or, for an arbitrary route that is not one
+        of the topology's k-shortest paths, ``link_ids``: the links in the
+        order the channel travels them. ``reverse`` states that the channel
+        travels ``path`` from its last node to its first (see
+        :meth:`travels_reversed`); only CFM2 depends on the direction.
         ``modulation`` is the channel's format; it is required only by the CFM2
         modulation-format correction.
         """
-        prepared = self._prepare_candidate_summary_inputs(state, path)
+        if (path is None) == (link_ids is None):
+            raise ValueError("pass exactly one of path and link_ids")
+        if path is None:
+            assert link_ids is not None
+            if reverse:
+                raise ValueError("link_ids are already in the direction of travel; do not pass reverse")
+            path = self.topology.path_from_link_ids(link_ids)
+        prepared = self._prepare_candidate_summary_inputs(state, path, reverse=self._cfm2 and reverse)
         nli_scale, add, express, drop, transceiver = self._path_terms(path)
-        extra = add + express + drop + transceiver
-        link_gsnr, link_ase, link_nli, total, _, _, _ = path_noise(
+        link_gsnr, link_ase, link_nli, total, _, _, _, link_sci, link_xci = path_noise(
             prepared.span_offsets,
             prepared.span_lengths,
             prepared.span_attenuation,
@@ -322,16 +395,20 @@ class QoTEngine:
             frequency_slot_bandwidth=self.config.frequency_slot_bandwidth,
             interferer_psd_actual=self._interferer_psd_actual,
             nli_scale=nli_scale,
-            extra_nsr=extra,
+            extra_nsr=prepared.extra_nsr,
             cfm2=self._cfm2,
             cut_phi=self._cut_phi(modulation),
             running_rho=prepared.running_rho,
+            span_cut_distance_km=prepared.span_cut_distance_km,
+            split_nli=True,
         )
         raw_nli_total = float(np.sum(link_gsnr - link_ase))
         return LightpathNoiseBreakdown(
             link_ids=path.link_ids,
             link_ase_nsr=link_ase,
             link_nli_nsr=link_nli,
+            link_sci_nsr=link_sci,
+            link_xci_nsr=link_xci,
             coherent_excess_nsr=(nli_scale - 1.0) * raw_nli_total,
             roadm_add_nsr=add,
             roadm_express_nsr=express,
@@ -353,6 +430,7 @@ class QoTEngine:
             bandwidth=service.bandwidth,
             launch_power=service.launch_power if service.launch_power > 0.0 else self._launch_power,
             modulation=service.modulation,
+            reverse=self.travels_reversed(service.path, service.request.source_id),
         )
 
     def launch_power_for(self, request: ServiceRequest) -> float:
@@ -395,6 +473,7 @@ class QoTEngine:
             launch_power=candidate.launch_power,
             state=state,
             modulation=candidate.modulation,
+            reverse=self._cfm2_reversed(candidate.path, candidate.request.source_id),
         )
         return QoTResult(
             osnr=metrics.osnr,
@@ -412,6 +491,7 @@ class QoTEngine:
             launch_power=candidate.launch_power,
             state=state,
             modulation=candidate.modulation,
+            reverse=self._cfm2_reversed(candidate.path, candidate.request.source_id),
         )
         threshold = candidate.modulation.minimum_osnr + self.config.margin
         return QoTCandidateSummary(
@@ -434,7 +514,9 @@ class QoTEngine:
         service_slot_start: int,
         service_num_slots: int,
         launch_power: float | None = None,
+        reverse: bool = False,
     ) -> QoTCandidateSummary:
+        """QoT of one candidate; ``reverse`` as in :meth:`noise_breakdown`."""
         bandwidth = self.config.frequency_slot_bandwidth * service_num_slots
         center_frequency = (
             self.config.frequency_start
@@ -449,6 +531,7 @@ class QoTEngine:
             launch_power=self._launch_power if launch_power is None else launch_power,
             state=state,
             modulation=modulation,
+            reverse=self._cfm2 and reverse,
         )
         threshold = modulation.minimum_osnr + self.config.margin
         return QoTCandidateSummary(
@@ -471,8 +554,10 @@ class QoTEngine:
         service_num_slots: int,
         candidate_starts: np.ndarray | list[int] | tuple[int, ...],
         launch_power: float | None = None,
+        reverse: bool = False,
     ) -> _CandidateBatchSummary:
-        prepared_inputs = self._prepare_candidate_summary_inputs(state, path)
+        """QoT of every candidate start; ``reverse`` as in :meth:`noise_breakdown`."""
+        prepared_inputs = self._prepare_candidate_summary_inputs(state, path, reverse=self._cfm2 and reverse)
         return self._summarize_candidate_starts_prepared(
             prepared_inputs=prepared_inputs,
             service_id=service_id,
@@ -488,10 +573,19 @@ class QoTEngine:
         self,
         state: RuntimeState,
         path: PathRecord,
+        reverse: bool = False,
     ) -> _PreparedCandidateSummaryInputs:
+        """Kernel inputs of ``path`` in ``state``. ``reverse`` (CFM2 only) makes
+        the channel under test travel the links of the path backwards."""
         static_inputs = self._path_summary_static_inputs(path)
+        span_cut_distance_km = (
+            None if static_inputs.span_cut_distance_km is None else static_inputs.span_cut_distance_km[int(reverse)]
+        )
         if not self._include_running_service_interference:
             return _PreparedCandidateSummaryInputs(
+                nli_scale=static_inputs.terms[0],
+                extra_nsr=static_inputs.extra_nsr,
+                span_cut_distance_km=span_cut_distance_km,
                 span_offsets=static_inputs.span_offsets,
                 span_lengths=static_inputs.span_lengths,
                 span_attenuation=static_inputs.span_attenuation,
@@ -499,7 +593,7 @@ class QoTEngine:
                 span_input_loss=static_inputs.span_input_loss,
                 span_output_loss=static_inputs.span_output_loss,
                 span_power_offset_db=static_inputs.span_power_offset_db,
-                running_offsets=np.zeros(len(static_inputs.link_ids) + 1, dtype=np.int32),
+                running_offsets=static_inputs.no_running_offsets,
                 running_service_ids=self._empty_service_ids,
                 running_center_frequencies=self._empty_float_values,
                 running_bandwidths=self._empty_float_values,
@@ -541,6 +635,9 @@ class QoTEngine:
             cursor = next_cursor
 
         return _PreparedCandidateSummaryInputs(
+            nli_scale=static_inputs.terms[0],
+            extra_nsr=static_inputs.extra_nsr,
+            span_cut_distance_km=span_cut_distance_km,
             span_offsets=static_inputs.span_offsets,
             span_lengths=static_inputs.span_lengths,
             span_attenuation=static_inputs.span_attenuation,
@@ -569,7 +666,9 @@ class QoTEngine:
         path: PathRecord | None = None,
         modulation: Modulation | None = None,
     ) -> _CandidateBatchSummary:
-        nli_scale, extra_nsr = (1.0, 0.0) if path is None else self._path_scale_and_extra(path)
+        nli_scale, extra_nsr = (
+            (1.0, 0.0) if path is None else (prepared_inputs.nli_scale, prepared_inputs.extra_nsr)
+        )
         starts = np.asarray(candidate_starts, dtype=np.int32)
         if starts.ndim != 1:
             raise ValueError("candidate_starts must be 1D")
@@ -610,6 +709,7 @@ class QoTEngine:
             cfm2=self._cfm2,
             cut_phi=self._cut_phi(modulation),
             running_rho=prepared_inputs.running_rho,
+            span_cut_distance_km=prepared_inputs.span_cut_distance_km,
         )
         return _CandidateBatchSummary(
             meets_threshold=meets_threshold,
@@ -619,7 +719,7 @@ class QoTEngine:
         )
 
     def _path_summary_static_inputs(self, path: PathRecord) -> _PathSummaryStaticInputs:
-        cached = self._path_summary_static_cache.get(path.id)
+        cached = self._path_summary_static_cache.get(path.link_ids)
         if cached is not None:
             return cached
 
@@ -652,6 +752,14 @@ class QoTEngine:
                 span_power_offset_db[cursor:next_cursor, :] = link_offsets
             cursor = next_cursor
 
+        terms = self._compute_path_terms(path.link_ids)
+        span_cut_distance_km = None
+        link_start_km = None
+        if self._cfm2:
+            forward = self._cfm2_distances(path.link_ids, span_offsets, reverse=False)
+            backward = self._cfm2_distances(path.link_ids, span_offsets, reverse=True)
+            span_cut_distance_km = (forward[0], backward[0])
+            link_start_km = (forward[1], backward[1])
         static_inputs = _PathSummaryStaticInputs(
             link_ids=path.link_ids,
             span_offsets=span_offsets,
@@ -661,8 +769,13 @@ class QoTEngine:
             span_input_loss=span_input_loss,
             span_output_loss=span_output_loss,
             span_power_offset_db=span_power_offset_db,
+            terms=terms,
+            extra_nsr=terms[1] + terms[2] + terms[3] + terms[4],
+            no_running_offsets=np.zeros(len(path.link_ids) + 1, dtype=np.int32),
+            span_cut_distance_km=span_cut_distance_km,
+            link_start_km=link_start_km,
         )
-        self._path_summary_static_cache[path.id] = static_inputs
+        self._path_summary_static_cache[path.link_ids] = static_inputs
         return static_inputs
 
     def recompute_service(self, state: RuntimeState, service_id: int) -> ServiceQoTUpdate:
@@ -677,6 +790,7 @@ class QoTEngine:
             launch_power=service.launch_power,
             state=state,
             modulation=service.modulation,
+            reverse=self._cfm2_reversed(service.path, service.request.source_id),
         )
         return ServiceQoTUpdate(
             service_id=service_id,
@@ -721,9 +835,9 @@ class QoTEngine:
         launch_power: float,
         state: RuntimeState,
         modulation: Modulation | None,
+        reverse: bool = False,
     ) -> _MetricsSummary:
-        prepared = self._prepare_candidate_summary_inputs(state, path)
-        nli_scale, extra_nsr = self._path_scale_and_extra(path)
+        prepared = self._prepare_candidate_summary_inputs(state, path, reverse)
         _, _, _, acc_gsnr, acc_ase, acc_nli, worst_link_nli_share = path_noise(
             prepared.span_offsets,
             prepared.span_lengths,
@@ -746,11 +860,12 @@ class QoTEngine:
             frequency_start=self.config.frequency_start,
             frequency_slot_bandwidth=self.config.frequency_slot_bandwidth,
             interferer_psd_actual=self._interferer_psd_actual,
-            nli_scale=nli_scale,
-            extra_nsr=extra_nsr,
+            nli_scale=prepared.nli_scale,
+            extra_nsr=prepared.extra_nsr,
             cfm2=self._cfm2,
             cut_phi=self._cut_phi(modulation),
             running_rho=prepared.running_rho,
+            span_cut_distance_km=prepared.span_cut_distance_km,
         )
 
         osnr = 10.0 * math.log10(1.0 / acc_gsnr)
@@ -807,7 +922,11 @@ class QoTEngine:
             bandwidths[index] = running_service.bandwidth
             phi_modulation[index] = _modulation_phi(running_service.modulation)
             if start_distance_km is not None:
-                start_distance_km[index] = self._link_start_km(running_service.path, link_id)
+                start_distance_km[index] = self._link_start_km(
+                    running_service.path,
+                    link_id,
+                    self.travels_reversed(running_service.path, running_service.request.source_id),
+                )
             launch_powers[index] = (
                 running_service.launch_power if running_service.launch_power > 0.0 else self._launch_power
             )
@@ -817,7 +936,7 @@ class QoTEngine:
             # CFM2 XCI factor of every (span, interferer) pair of the link. It
             # does not depend on the channel under test, so it is computed once
             # per link state; dispersion is accumulated from each interferer's
-            # own transmitter.
+            # own transmitter, in its direction of travel.
             span_distance_km = self._link_span_start_km[link_id][:, None] + start_distance_km[None, :]
             rho = np.ascontiguousarray(
                 rho_interferer(phi_modulation[None, :], ABS_BETA2_PS2_PER_KM * span_distance_km).ravel()
