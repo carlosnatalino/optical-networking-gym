@@ -129,9 +129,11 @@ def test_coronet_tapi_context_reads_as_coronet_conus() -> None:
     assert model.link_count == 99
     assert "Abilene" in model.node_names
     assert not any(name.startswith(("trx", "roadm")) for name in model.node_names)
-    # GNPy fibre lengths: Abilene-El_Paso 761.209 km, Abilene-Dallas 336.951 km.
-    ratio = model.link_between("Abilene", "El_Paso").length_km / model.link_between("Abilene", "Dallas").length_km
-    assert ratio == pytest.approx(761.209 / 336.951, rel=1e-3)
+    # Fibre lengths of the GNPy CORONET CONUS topology the context was exported from.
+    assert model.link_between("Abilene", "Dallas").length_km == pytest.approx(336.951, abs=1e-3)
+    assert model.link_between("Abilene", "El_Paso").length_km == pytest.approx(761.209, abs=1e-3)
+    assert model.link_lengths_km.min() == pytest.approx(24.214, abs=1e-3)
+    assert model.link_lengths_km.max() == pytest.approx(1221.189, abs=1e-3)
 
 
 def test_make_env_resolves_a_tapi_topology_by_name(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
