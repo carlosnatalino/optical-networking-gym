@@ -65,7 +65,8 @@ def make_env(
         and `scenario` cannot also be provided.
         `topology_name`: Topology identifier resolved from `topology_dir` or the
         previously configured global topology directory.
-        `topology_dir`: Directory containing `.xml` or `.txt` topology files.
+        `topology_dir`: Directory containing `.xml`, `.txt` or `.json` (T-API)
+        topology files.
         `k_paths`: Number of K-shortest paths to precompute.
         `max_span_length_km`, `default_attenuation_db_per_km`,
         `default_noise_figure_db`: Physical defaults applied while parsing the topology.
