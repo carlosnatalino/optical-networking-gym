@@ -1,8 +1,10 @@
-"""Direction of travel (CFM2), route identity of the engine caches, and the
+"""Undirected physical model, route identity of the engine caches, and the
 split of the per-link NLI into self- and cross-channel interference.
 
-* One ``PathRecord`` serves both directions of a node pair; with CFM2 the
-  dispersion a channel has accumulated depends on the direction it travels.
+* Lightpaths are bidirectional and the engine is undirected: the GSNR of a
+  route is computed once, in its canonical direction (lower node index first),
+  whatever the source of the request. CFM2, the only direction-dependent part
+  of the model, accumulates dispersion along that direction for every channel.
 * The engine and the runtime state identify a path by its links, so records
   that reuse an id (sub-paths, external planners) are evaluated correctly.
 * ``LightpathNoiseBreakdown`` reports the SCI and XCI of every link.
@@ -144,164 +146,93 @@ def _osnr(engine: QoTEngine, state: RuntimeState, path: PathRecord, *, backwards
 
 
 # --------------------------------------------------------------------------
-# Direction of travel
+# Undirected model
 # --------------------------------------------------------------------------
 
 
-def test_travels_reversed_follows_the_request_source(topology: TopologyModel) -> None:
-    path = _asymmetric_path(topology)
-    assert not QoTEngine.travels_reversed(path, path.node_indices[0])
-    assert QoTEngine.travels_reversed(path, path.node_indices[-1])
-    # A source that is not an endpoint (e.g. a sub-path) is taken as forward.
-    assert not QoTEngine.travels_reversed(path, path.node_indices[1])
+def test_topology_paths_are_canonical(topology: TopologyModel) -> None:
+    # The engine evaluates every route from its lower-index endpoint, the
+    # direction of the k-shortest path records, which it therefore uses as is.
+    assert all(path.node_indices[0] < path.node_indices[-1] for path in topology.paths)
 
 
-def test_cfm2_reversed_lightpath_equals_the_reversed_record(topology: TopologyModel) -> None:
-    path = _asymmetric_path(topology)
-    engine, state = _loaded(_config(), topology, path)
-    backwards = _osnr(engine, state, path, backwards=True)
-    forwards = _osnr(engine, state, path, backwards=False)
-    # The explicitly reversed record (same id, links in reverse order) is
-    # travelled forwards by a request from its first node.
-    flipped = _reverse_path_record(path)
-    assert flipped.id == path.id
-    assert _osnr(engine, state, flipped, backwards=False) == pytest.approx(backwards, abs=1e-9)
-    assert _osnr(engine, state, flipped, backwards=True) == pytest.approx(forwards, abs=1e-9)
-    # CFM2 makes the GSNR direction dependent (by ~1e-3 dB on nobel-eu paths,
-    # far above rounding).
-    assert abs(backwards - forwards) > 1e-7
-
-
-@pytest.mark.parametrize("correction", ["egn_xci", "gn"])
-def test_other_corrections_do_not_depend_on_the_direction(topology: TopologyModel, correction: str) -> None:
+@pytest.mark.parametrize("correction", ["egn_xci", "cfm2", "gn"])
+def test_gsnr_does_not_depend_on_the_direction(topology: TopologyModel, correction: str) -> None:
     path = _asymmetric_path(topology)
     engine, state = _loaded(_config(nli_modulation_correction=correction), topology, path)
-    assert _osnr(engine, state, path, backwards=True) == _osnr(engine, state, path, backwards=False)
+    forwards = _osnr(engine, state, path, backwards=False)
+    assert _osnr(engine, state, path, backwards=True) == forwards
+    # The same route stored backwards (same id, links reversed) is canonicalised.
+    flipped = _reverse_path_record(path)
+    assert _osnr(engine, state, flipped, backwards=False) == forwards
+    assert _osnr(engine, state, flipped, backwards=True) == forwards
 
 
-def test_interferer_dispersion_is_accumulated_in_its_direction_of_travel(topology: TopologyModel) -> None:
+def test_interferers_accumulate_dispersion_along_the_canonical_direction(topology: TopologyModel) -> None:
     path = _asymmetric_path(topology)
     config = _config()
     engine = QoTEngine(config, topology)
     state = RuntimeState(config, topology)
     _provision(engine, state, 1, path, 40, backwards=False)
     _provision(engine, state, 2, path, 60, backwards=True)
+    _provision(engine, state, 3, _reverse_path_record(path), 80)
     link_id = path.link_ids[1]
-    rho = engine._link_running_service_arrays(state, link_id).rho.reshape(-1, 2)
-    span_start_km = engine._link_span_start_km[link_id]
-    lengths = [topology.links[link].length_km for link in path.link_ids]
-    forward_km = sum(lengths[:1])
-    backward_km = sum(lengths[2:])
-    np.testing.assert_allclose(rho[:, 0], cfm2.rho_interferer(1.0, 21.3 * (span_start_km + forward_km)), rtol=1e-3)
-    np.testing.assert_allclose(rho[:, 1], cfm2.rho_interferer(1.0, 21.3 * (span_start_km + backward_km)), rtol=1e-3)
+    rho = engine._link_running_service_arrays(state, link_id).rho.reshape(-1, 3)
+    start_km = topology.links[path.link_ids[0]].length_km
+    expected = cfm2.rho_interferer(1.0, 21.3 * (engine._link_span_start_km[link_id] + start_km))
+    for column in range(3):
+        np.testing.assert_allclose(rho[:, column], expected, rtol=1e-3)
+    np.testing.assert_array_equal(rho[:, 0], rho[:, 1])
+    np.testing.assert_array_equal(rho[:, 0], rho[:, 2])
 
 
-def test_every_entry_point_uses_the_direction(topology: TopologyModel) -> None:
+def test_every_entry_point_is_direction_independent(topology: TopologyModel) -> None:
     path = _asymmetric_path(topology)
     config = _config(roadm_add_osnr_db=33.0, nli_coherence_epsilon=0.05)
     engine, state = _loaded(config, topology, path)
-    request = _request(0, path, backwards=True)
-    candidate = engine.build_candidate(request, path, QAM16, 52, 4)
-    expected = engine.evaluate_candidate(state, candidate).osnr
-    assert engine.summarize_candidate(state, candidate).osnr == pytest.approx(expected, abs=1e-12)
-    at = engine.summarize_candidate_at(
-        state=state, service_id=0, path=path, modulation=QAM16, service_slot_start=52, service_num_slots=4, reverse=True
-    )
-    assert at.osnr == pytest.approx(expected, abs=1e-12)
-    batch = engine.summarize_candidate_starts(
-        state=state,
-        service_id=0,
-        path=path,
-        modulation=QAM16,
-        service_num_slots=4,
-        candidate_starts=[52],
-        reverse=True,
-    )
-    assert batch.osnr_margin[0] == pytest.approx(at.osnr_margin, abs=1e-9)
-    breakdown = engine.noise_breakdown(
-        state,
-        path=path,
-        service_id=0,
-        center_frequency=candidate.center_frequency,
-        bandwidth=candidate.bandwidth,
-        launch_power=candidate.launch_power,
-        modulation=QAM16,
-        reverse=True,
-    )
-    assert breakdown.gsnr_db == pytest.approx(expected, abs=1e-9)
-    # An established reversed service keeps its direction.
-    _provision(engine, state, 0, path, 52, backwards=True, modulation=QAM16)
-    assert engine.recompute_service(state, 0).osnr == pytest.approx(expected, abs=1e-9)
-    assert engine.service_noise_breakdown(state, 0).gsnr_db == pytest.approx(expected, abs=1e-9)
+    flipped = _reverse_path_record(path)
+    expected = _osnr(engine, state, path, backwards=False)
+    candidate = engine.build_candidate(_request(0, path, backwards=True), flipped, QAM16, 52, 4)
+    assert engine.evaluate_candidate(state, candidate).osnr == expected
+    assert engine.summarize_candidate(state, candidate).osnr == expected
+    for route in (path, flipped):
+        at = engine.summarize_candidate_at(
+            state=state, service_id=0, path=route, modulation=QAM16, service_slot_start=52, service_num_slots=4
+        )
+        assert at.osnr == expected
+        batch = engine.summarize_candidate_starts(
+            state=state, service_id=0, path=route, modulation=QAM16, service_num_slots=4, candidate_starts=[52]
+        )
+        assert batch.osnr_margin[0] == at.osnr_margin
+        breakdown = engine.noise_breakdown(
+            state,
+            path=route,
+            service_id=0,
+            center_frequency=candidate.center_frequency,
+            bandwidth=candidate.bandwidth,
+            launch_power=candidate.launch_power,
+            modulation=QAM16,
+        )
+        assert breakdown.total_nsr == pytest.approx(10 ** (-expected / 10), rel=1e-12)
+        assert breakdown.link_ids == path.link_ids  # canonical order
+    # An established service recomputes to the same GSNR, whichever end its
+    # request came from and whichever orientation its record has.
+    for route, backwards in ((path, True), (flipped, False)):
+        engine, state = _loaded(config, topology, path)
+        _provision(engine, state, 0, route, 52, backwards=backwards, modulation=QAM16)
+        assert engine.recompute_service(state, 0).osnr == expected
+        assert engine.service_noise_breakdown(state, 0).gsnr_db == pytest.approx(expected, abs=1e-9)
 
 
-def test_request_analysis_uses_the_direction(topology: TopologyModel) -> None:
+def test_request_analysis_is_direction_independent(topology: TopologyModel) -> None:
     path = _asymmetric_path(topology)
     config = _config(k_paths=2)
     engine, state = _loaded(config, topology, path)
     analysis_engine = RequestAnalysisEngine(config, topology, engine)
-    request = _request(0, path, backwards=True)
-    analysis = analysis_engine.build(state, request)
-    path_index = next(index for index, candidate in enumerate(analysis.paths) if candidate.link_ids == path.link_ids)
-    offset = analysis.modulation_indices.index(1)  # 16QAM
-    starts = np.flatnonzero(analysis.resource_valid_starts[path_index, offset])[:5]
-    batch = engine.summarize_candidate_starts(
-        state=state,
-        service_id=0,
-        path=path,
-        modulation=QAM16,
-        service_num_slots=int(analysis.required_slots_by_path_mod[path_index, offset]),
-        candidate_starts=starts,
-        reverse=True,
-    )
-    np.testing.assert_allclose(analysis.osnr_margin_by_start[path_index, offset, starts], batch.osnr_margin, atol=1e-5)
-
-
-@KERNELS
-def test_forward_distances_reproduce_the_array_order_accumulation(kernel) -> None:
-    inputs = _kernel_inputs(np.random.default_rng(21))
-    distances = np.concatenate(([0.0], np.cumsum(inputs["lengths"][:-1])))
-    # Same sequential accumulation as the kernel: bit-identical results.
-    accumulated = np.empty_like(distances)
-    total = 0.0
-    for index, length in enumerate(inputs["lengths"]):
-        accumulated[index] = total
-        total += float(length)
-    extra = {"cfm2": True, "cut_phi": 17 / 25, "running_rho": inputs["rho"]}
-    for got, expected in zip(
-        _path_noise(kernel, inputs, span_cut_distance_km=accumulated, **extra), _path_noise(kernel, inputs, **extra)
-    ):
-        np.testing.assert_array_equal(got, expected)
-    for got, expected in zip(
-        _summarize(kernel, inputs, span_cut_distance_km=accumulated, **extra), _summarize(kernel, inputs, **extra)
-    ):
-        np.testing.assert_array_equal(got, expected)
-    np.testing.assert_allclose(accumulated, distances, rtol=1e-12)
-
-
-def test_span_distances_match_between_kernels() -> None:
-    inputs = _kernel_inputs(np.random.default_rng(22))
-    distances = np.array([500.0, 580.0, 660.0, 0.0, 70.0])  # second link travelled first
-    extra = {"cfm2": True, "cut_phi": 1.0, "running_rho": inputs["rho"], "span_cut_distance_km": distances}
-    for got, expected in zip(_path_noise(compiled_kernel, inputs, **extra), _path_noise(python_kernel, inputs, **extra)):
-        np.testing.assert_allclose(got, expected, rtol=1e-12)
-    for got, expected in zip(_summarize(compiled_kernel, inputs, **extra), _summarize(python_kernel, inputs, **extra)):
-        np.testing.assert_allclose(got, expected, rtol=1e-12)
-    # The distances change the result, and are ignored without CFM2.
-    assert _path_noise(compiled_kernel, inputs, **extra)[3] != _path_noise(
-        compiled_kernel, inputs, cfm2=True, cut_phi=1.0, running_rho=inputs["rho"]
-    )[3]
-    legacy = _path_noise(compiled_kernel, inputs)
-    ignored = _path_noise(compiled_kernel, inputs, span_cut_distance_km=distances)
-    for got, expected in zip(ignored, legacy):
-        np.testing.assert_array_equal(got, expected)
-
-
-@KERNELS
-def test_span_distances_are_validated(kernel) -> None:
-    inputs = _kernel_inputs(np.random.default_rng(23))
-    with pytest.raises(ValueError, match="span_cut_distance_km"):
-        _path_noise(kernel, inputs, cfm2=True, cut_phi=1.0, running_rho=inputs["rho"], span_cut_distance_km=np.zeros(4))
+    forwards = analysis_engine.build(state, _request(0, path, backwards=False))
+    backwards = analysis_engine.build(state, _request(0, path, backwards=True))
+    np.testing.assert_array_equal(forwards.osnr_margin_by_start, backwards.osnr_margin_by_start)
+    np.testing.assert_array_equal(forwards.qot_valid_starts, backwards.qot_valid_starts)
 
 
 # --------------------------------------------------------------------------
@@ -374,16 +305,16 @@ def test_noise_breakdown_accepts_link_ids(topology: TopologyModel) -> None:
     assert by_links.link_ids == sub_links
     assert by_links.total_nsr == by_path.total_nsr
     np.testing.assert_array_equal(by_links.link_nli_nsr, by_path.link_nli_nsr)
-    # Links listed backwards are travelled backwards.
+    # Links listed backwards describe the same (undirected) route.
     backwards = engine.noise_breakdown(state, link_ids=tuple(reversed(path.link_ids)), **kwargs)
-    reversed_record = engine.noise_breakdown(state, path=path, reverse=True, **kwargs)
-    assert backwards.gsnr_db == pytest.approx(reversed_record.gsnr_db, abs=1e-9)
+    forwards = engine.noise_breakdown(state, path=path, **kwargs)
+    assert backwards.link_ids == path.link_ids
+    assert backwards.total_nsr == forwards.total_nsr
+    np.testing.assert_array_equal(backwards.link_xci_nsr, forwards.link_xci_nsr)
     with pytest.raises(ValueError, match="exactly one"):
         engine.noise_breakdown(state, path=path, link_ids=path.link_ids, **kwargs)
     with pytest.raises(ValueError, match="exactly one"):
         engine.noise_breakdown(state, **kwargs)
-    with pytest.raises(ValueError, match="reverse"):
-        engine.noise_breakdown(state, link_ids=path.link_ids, reverse=True, **kwargs)
 
 
 # --------------------------------------------------------------------------

@@ -412,11 +412,7 @@ class RequestAnalysisEngine:
             if self.config.mask_mode is MaskMode.RESOURCE_ONLY or self.config.qot_constraint == "DIST":
                 prepared_qot_inputs_by_path.append(None)
                 continue
-            prepared_qot_inputs_by_path.append(
-                self.qot_engine._prepare_candidate_summary_inputs(
-                    state, path, reverse=self.qot_engine._cfm2_reversed(path, request.source_id)
-                )
-            )
+            prepared_qot_inputs_by_path.append(self.qot_engine._prepare_candidate_summary_inputs(state, path))
 
         max_feasible_modulation_index: int | None = None
         lowest_required_modulation_index = 0

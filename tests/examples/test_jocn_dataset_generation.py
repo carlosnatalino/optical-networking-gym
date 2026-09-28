@@ -86,6 +86,7 @@ def test_dataset_gsnr_includes_the_copropagating_channels(run_dir: Path) -> None
     assert ds.attrs["qot_nli_include_interferers"] == 1
     assert ds.attrs["qot_nli_interferer_psd"] == "cut"
     assert ds.attrs["qot_nli_modulation_correction"] == "egn_xci"
+    assert ds.attrs["qot_direction"].startswith("undirected")
     assert "query" not in ds.dims and ds.attrs["qot_query_requests"] == 0
     valid = ds.hop_link.values >= 0
     sci, xci, nli = (ds[name].values[valid] for name in ("hop_sci_nsr", "hop_xci_nsr", "hop_nli_nsr"))

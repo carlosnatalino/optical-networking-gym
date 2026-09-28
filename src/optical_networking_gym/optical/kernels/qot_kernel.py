@@ -38,9 +38,6 @@ Two corrections of the Gaussian-signal assumption are available:
   ``running_rho``. ``running_rho`` is flat, with one row-major
   ``(n_spans_link, n_running_link)`` block per link, in link order, because
   these factors do not depend on the CUT and the caller can cache them.
-  ``span_cut_distance_km`` gives the distance from the CUT's transmitter to the
-  input of every span, so that the dispersion is accumulated in the direction
-  of travel; without it, the distance is accumulated in array order.
 
 With ``split_nli=True``, :func:`path_noise` also returns the per-link NLI split
 into its self-channel (SCI) and cross-channel (XCI) parts. They sum to the
@@ -86,26 +83,13 @@ def _span_rho_cut(
     cut_phi: float,
     bandwidth: float,
     cut_start_distance_km: float,
-    span_cut_distance_km: np.ndarray | None = None,
 ) -> np.ndarray | None:
-    """CFM2 SCI factor of every span (``None`` when CFM2 is disabled).
-
-    The CUT's distance to each span input is ``span_cut_distance_km`` when
-    given, else accumulated from ``cut_start_distance_km`` in array order.
-    """
+    """CFM2 SCI factor of every span (``None`` when CFM2 is disabled)."""
     if not cfm2:
         return None
-    n_spans = lengths.shape[0]
-    distances = None
-    if span_cut_distance_km is not None:
-        distances = np.asarray(span_cut_distance_km, dtype=np.float64)
-        if distances.ndim != 1 or distances.shape[0] != n_spans:
-            raise ValueError(f"span_cut_distance_km has {distances.size} entries, expected {n_spans}")
-    values = np.empty(n_spans, dtype=np.float64)
+    values = np.empty(lengths.shape[0], dtype=np.float64)
     distance_km = cut_start_distance_km
-    for span_index in range(n_spans):
-        if distances is not None:
-            distance_km = float(distances[span_index])
+    for span_index in range(lengths.shape[0]):
         values[span_index] = rho_cut(cut_phi, bandwidth * 1e-12, ABS_BETA2_PS2_PER_KM * distance_km)
         distance_km += lengths[span_index]
     return values
@@ -432,7 +416,6 @@ def summarize_candidate_starts(
     cfm2: bool = False,
     cut_phi: float = 0.0,
     running_rho: np.ndarray | None = None,
-    span_cut_distance_km: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Evaluate the GSNR margin of every candidate start slot on one path.
 
@@ -476,7 +459,7 @@ def summarize_candidate_starts(
     link_count = max(0, span_offsets_arr.shape[0] - 1)
     bandwidth = frequency_slot_bandwidth * service_num_slots
     center_frequency_offset = frequency_slot_bandwidth * (service_num_slots / 2.0)
-    span_rho_cut = _span_rho_cut(lengths, cfm2, cut_phi, bandwidth, 0.0, span_cut_distance_km)
+    span_rho_cut = _span_rho_cut(lengths, cfm2, cut_phi, bandwidth, 0.0)
     rho_blocks = _rho_blocks(span_offsets_arr, running_offsets_arr, running_rho, cfm2)
 
     meets_threshold = np.zeros(candidate_count, dtype=np.bool_)
@@ -573,7 +556,6 @@ def path_noise(
     cfm2: bool = False,
     cut_phi: float = 0.0,
     running_rho: np.ndarray | None = None,
-    span_cut_distance_km: np.ndarray | None = None,
     split_nli: bool = False,
 ) -> tuple:
     """Per-link and path-total NSR of one channel on one path.
@@ -606,7 +588,7 @@ def path_noise(
     acc_nli_raw = 0.0
     worst_link_nli_share = 0.0
     lengths = np.asarray(span_lengths_km, dtype=np.float64)
-    span_rho_cut = _span_rho_cut(lengths, cfm2, cut_phi, bandwidth, 0.0, span_cut_distance_km)
+    span_rho_cut = _span_rho_cut(lengths, cfm2, cut_phi, bandwidth, 0.0)
     rho_blocks = _rho_blocks(offsets_arr, running_offsets_arr, running_rho, cfm2)
     for link_pos in range(link_count):
         gsnr, ase, nli, sci, xci = _accumulate_spans(

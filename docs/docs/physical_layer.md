@@ -7,6 +7,25 @@ closed-form GN model with a modulation-format correction (see
 kernel `optical/kernels/qot_kernel.pyx`, and its pure-Python twin
 `qot_kernel.py` has the same API.
 
+## Undirected model
+
+Lightpaths are bidirectional: a lightpath reserves its slots on every link of
+its route for both directions. The physical model is undirected accordingly.
+The GSNR of a route is computed once, in its *canonical direction* (from the
+endpoint with the lower node index to the other), which is the direction of
+the topology's k-shortest path records. A route and its reverse get the same
+GSNR, bit for bit, whatever the source of the request, and every per-link or
+per-span quantity (gain ripple, span order, CFM2 distances) follows that
+direction.
+
+This is a deliberate simplification. Only the CFM2 correction would depend on
+the direction, through the dispersion accumulated since the transmitter. The
+reverse direction differs by about 1e-3 dB on nobel-eu (at most 0.015 dB over
+the multi-hop paths, with or without heterogeneous span lengths), and that
+difference is disregarded. Modelling each direction on its own would also
+require a per-direction inventory (span order, amplifiers, connectors, ripple)
+and XCI from the co-directional halves of the interferers only.
+
 ## Scenario options
 
 | `ScenarioConfig` field | Default | Effect |
@@ -48,15 +67,10 @@ of real constellations, most for low-order formats and short reaches.
 16QAM, 69/100 for 32QAM, 13/21 for 64QAM, and 0 for Gaussian signals), looked
 up by spectral efficiency. For CFM2 in a mesh network:
 
-- `β2,acc` is the dispersion a channel has accumulated from its own
-  transmitter to the input of span `n`, using the kernel's constant `|β2|` =
-  21.3 ps²/km. It is measured in the direction of travel: the topology keeps
-  one path record for both directions of a node pair, and a lightpath whose
-  source is the record's last node travels its links backwards
-  (`QoTEngine.travels_reversed(path, source_id)`). Within a link, spans are
-  taken in their stored order, as for every other per-span quantity.
-  CFM2 is the only direction-dependent part of the model, and the effect is
-  small (on nobel-eu about 1e-3 dB, at most 0.015 dB).
+- `β2,acc` is the dispersion a channel has accumulated from the start of its
+  route to the input of span `n`, in the route's canonical direction (see
+  [Undirected model](#undirected-model)), using the kernel's constant `|β2|` =
+  21.3 ps²/km. Interferers accumulate it along their own route, likewise.
 - The occupied bandwidth stands in for the symbol rate `R_CUT`.
 - The factors were fitted for 32–128 GBaud channels and 80–120 km spans.
 - The paper's coherence (CFM3) and roll-off (CFM4) refinements are not modelled.
@@ -105,9 +119,9 @@ in `nli_correction_nsr`; the clip can only trigger with the default
 `"egn_xci"` correction, so with `"cfm2"` or `"gn"` the per-link sums are exact
 (up to rounding).
 
-The route is either a `PathRecord` (`path=`, with `reverse=True` for a channel
-that travels it backwards) or any sequence of links in the order of travel
-(`link_ids=`), e.g. a sub-path or the output of an external planner.
+The route is either a `PathRecord` (`path=`) or any sequence of links in order
+(`link_ids=`, in either direction), e.g. a sub-path or the output of an
+external planner. The per-link arrays follow the route's canonical direction.
 `TopologyModel.path_from_link_ids(link_ids)` builds the matching record. The
 engine and the runtime state identify a path by its links, not by its id, so
 records that reuse an id are never confused.

@@ -36,7 +36,9 @@ Each dataset is a self-documented netCDF file (xarray, h5netcdf engine) with:
 * ``path``: every k-shortest path of the topology (nodes, links, length), with
   the gym's path ids. As in the gym, one record serves both directions of a
   node pair, so a sample's route is ``path_id`` read forwards, or backwards
-  when ``path_reversed`` is 1;
+  when ``path_reversed`` is 1. The gym's physical model is undirected
+  (lightpaths are bidirectional), so the GSNR and the per-link noise do not
+  depend on the direction;
 * ``modulation`` and ``node`` (with coordinates when the topology has them):
   lookup tables;
 * ``query`` (only with ``--query-fraction`` > 0): the QoT queries of the
@@ -505,6 +507,7 @@ def build_dataset(env: DatasetEnv, collected: _Collected, policy: str, attrs: di
         ),
         "qot_nli_interferer_psd": str(config.nli_interferer_psd),
         "qot_nli_modulation_correction": str(config.nli_modulation_correction),
+        "qot_direction": "undirected: GSNR of the route in its canonical direction (lower node index first), for both directions",
         "qot_query_requests": collected.query_requests,
         # Everything needed to rebuild the gym objects (see ``load_topology``).
         "scenario_config_json": scenario_config_json(config),

@@ -1,7 +1,6 @@
-"""Speed guards for the QoT kernel: the CFM2 modulation-format correction, its
-per-span distances (direction of travel) and the SCI/XCI split must not slow the
-hot paths down, and the per-link evaluation of the XCI terms must stay
-effective.
+"""Speed guards for the QoT kernel: the CFM2 modulation-format correction and
+the SCI/XCI split must not slow the hot paths down, and the per-link evaluation
+of the XCI terms must stay effective.
 
 Timings are relative (same process, same inputs, best of N), so the guard does
 not depend on the machine speed. It only runs against the compiled kernel.
@@ -158,14 +157,6 @@ def _batch(inputs: dict[str, np.ndarray], attenuation: np.ndarray | None = None,
         include_nli=True,
         **extra,
     )
-
-
-def test_cfm2_span_distances_are_not_slower() -> None:
-    inputs = _inputs()
-    distances = np.concatenate(([0.0], np.cumsum(inputs["lengths"][::-1])[:-1]))[::-1].copy()
-    plain = _best_time(_batch(inputs, **_cfm2_kwargs(inputs)), repeats=7, inner=3)
-    directed = _best_time(_batch(inputs, span_cut_distance_km=distances, **_cfm2_kwargs(inputs)), repeats=7, inner=3)
-    assert directed <= MAX_SLOWDOWN * plain, f"{directed * 1e3:.2f} ms vs {plain * 1e3:.2f} ms"
 
 
 def test_xci_terms_are_evaluated_once_per_link() -> None:

@@ -93,7 +93,6 @@ cdef inline void _precompute_span_terms(
     bint cfm2,
     double cut_phi,
     double cut_start_distance_km,
-    const double* span_cut_distance_km,
     double* terms,
 ) noexcept nogil:
     cdef Py_ssize_t span_index
@@ -104,8 +103,6 @@ cdef inline void _precompute_span_terms(
     # CFM2: rho_CUT depends on the span only through the dispersion the CUT
     # has accumulated since its transmitter, so the per-call parts are hoisted
     # and the factor is folded into the SCI term (zero cost per candidate).
-    # The distance is read from ``span_cut_distance_km`` (direction of travel,
-    # computed by the caller) or, when NULL, accumulated in array order.
     cdef double distance_km = cut_start_distance_km
     cdef double rho_cut_base = 0.0
     cdef double rho_cut_scale = 0.0
@@ -124,8 +121,6 @@ cdef inline void _precompute_span_terms(
         row[TERM_L_EFF] = l_eff
         row[TERM_SUM_PHI_SELF] = asinh(PI_SQUARED * ABS_BETA_2 * (bandwidth * bandwidth) / (4.0 * attenuation))
         if cfm2:
-            if span_cut_distance_km != NULL:
-                distance_km = span_cut_distance_km[span_index]
             row[TERM_SUM_PHI_SELF] *= rho_cut_base + rho_cut_scale * (
                 rho_cut_rate + CFM2_A16 * pow(BETA2_PS2_PER_KM * distance_km + CFM2_A17, CFM2_A18)
             )
@@ -147,12 +142,8 @@ cdef inline cnp.ndarray _span_terms(
     bint cfm2,
     double cut_phi,
     double cut_start_distance_km,
-    object span_cut_distance_km=None,
 ):
     cdef cnp.ndarray terms = np.empty(n_spans * N_SPAN_TERMS, dtype=np.float64)
-    cdef const double* distance_ptr = NULL
-    if cfm2 and span_cut_distance_km is not None:
-        distance_ptr = _f64_ptr(<cnp.ndarray> span_cut_distance_km)
     _precompute_span_terms(
         n_spans,
         _f64_ptr(lengths),
@@ -163,7 +154,6 @@ cdef inline cnp.ndarray _span_terms(
         cfm2,
         cut_phi,
         cut_start_distance_km,
-        distance_ptr,
         <double*> cnp.PyArray_DATA(terms),
     )
     return terms
@@ -531,18 +521,6 @@ cdef inline object _as_rho(object running_rho, bint cfm2, Py_ssize_t expected):
     return rho
 
 
-cdef inline object _as_span_distances(object span_cut_distance_km, bint cfm2, Py_ssize_t n_spans):
-    """Validated per-span CUT distances (km) for CFM2, or ``None``."""
-    if not cfm2 or span_cut_distance_km is None:
-        return None
-    cdef cnp.ndarray distances = np.ascontiguousarray(span_cut_distance_km, dtype=np.float64)
-    if distances.ndim != 1 or distances.shape[0] != n_spans:
-        raise ValueError(
-            f"span_cut_distance_km has {distances.size} entries, expected {n_spans}"
-        )
-    return distances
-
-
 cdef inline const double* _rho_ptr(object rho, Py_ssize_t base) noexcept:
     if rho is None:
         return NULL
@@ -674,7 +652,6 @@ def summarize_candidate_starts(
     bint cfm2=False,
     double cut_phi=0.0,
     object running_rho=None,
-    object span_cut_distance_km=None,
 ):
     cdef Py_ssize_t n_spans = span_lengths_km.shape[0]
     cdef Py_ssize_t candidate_count = candidate_starts.shape[0]
@@ -713,16 +690,7 @@ def summarize_candidate_starts(
     cdef cnp.ndarray powers = _as_f64(running_launch_powers, running_service_ids.shape[0], launch_power)
     cdef Py_ssize_t n_offset_slots = offsets.shape[1]
     cdef cnp.ndarray terms = _span_terms(
-        n_spans,
-        lengths,
-        attenuations,
-        input_losses,
-        output_losses,
-        bandwidth,
-        cfm2,
-        cut_phi,
-        0.0,
-        _as_span_distances(span_cut_distance_km, cfm2, n_spans),
+        n_spans, lengths, attenuations, input_losses, output_losses, bandwidth, cfm2, cut_phi, 0.0
     )
     cdef cnp.ndarray rho_bases = _link_rho_bases(span_offsets, running_offsets, link_count, cfm2)
     cdef const Py_ssize_t[:] rho_bases_view = rho_bases
@@ -857,7 +825,6 @@ def path_noise(
     bint cfm2=False,
     double cut_phi=0.0,
     object running_rho=None,
-    object span_cut_distance_km=None,
     bint split_nli=False,
 ):
     """Per-link and path-total NSR of one channel on one path (see ``qot_kernel.py``)."""
@@ -896,16 +863,7 @@ def path_noise(
     cdef Py_ssize_t n_offset_slots = offsets.shape[1]
     cdef double nominal_nli_prefactor = _nli_prefactor(launch_power, bandwidth)
     cdef cnp.ndarray terms = _span_terms(
-        lengths.shape[0],
-        lengths,
-        attenuations,
-        input_losses,
-        output_losses,
-        bandwidth,
-        cfm2,
-        cut_phi,
-        0.0,
-        _as_span_distances(span_cut_distance_km, cfm2, lengths.shape[0]),
+        lengths.shape[0], lengths, attenuations, input_losses, output_losses, bandwidth, cfm2, cut_phi, 0.0
     )
     cdef cnp.ndarray rho_bases = _link_rho_bases(span_offsets, running_offsets, link_count, cfm2)
     cdef const Py_ssize_t[:] rho_bases_view = rho_bases
