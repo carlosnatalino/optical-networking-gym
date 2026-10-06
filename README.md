@@ -45,6 +45,15 @@ python examples/quickstart/basic_first_fit.py
 See `examples/INVENTORY.md` for the full list of examples, and `DEVELOPMENT.md`
 for the development workflow (build, tests, lint, type check).
 
+## Physical layer
+
+The QoT engine supports a heterogeneous physical layer (per-span fibre loss,
+amplifier NF, lumped losses and gain ripple) and runtime updates of the span
+parameters during a simulation, e.g. to model network aging
+(`env.update_spans([SpanUpdate(link_id, span_index, attenuation_db_per_km=...,
+noise_figure_db=...)])`), keeping the traffic state. See
+[docs/docs/physical_layer.md](docs/docs/physical_layer.md).
+
 ## Development
 
 See [DEVELOPMENT.md](DEVELOPMENT.md).

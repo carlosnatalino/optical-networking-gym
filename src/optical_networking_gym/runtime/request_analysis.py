@@ -288,7 +288,9 @@ class RequestAnalysisEngine:
         self.qot_engine = qot_engine
         self.cache_hits = 0
         self.cache_misses = 0
-        self._analysis_cache: dict[tuple[int, int, int, int, float, bool], RequestAnalysis] = {}
+        # Keyed by the runtime state, its allocation version and the QoT
+        # engine's physical-layer version (``QoTEngine.topology_version``).
+        self._analysis_cache: dict[tuple[int, int, int, int, int, float, bool], RequestAnalysis] = {}
         self._path_link_indices: dict[int, np.ndarray] = {
             path.id: np.asarray(path.link_ids, dtype=np.intp) for path in topology.paths
         }
@@ -324,6 +326,7 @@ class RequestAnalysisEngine:
         cache_key = (
             state.state_id,
             state.allocation_state_version,
+            self.qot_engine.topology_version,
             request.source_id,
             request.destination_id,
             float(request.bit_rate),

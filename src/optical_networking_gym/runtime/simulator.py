@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import replace
 from typing import Any, cast
 
@@ -15,7 +15,7 @@ from optical_networking_gym.contracts import (
 from optical_networking_gym.features.action_mask import ActionMask
 from optical_networking_gym.features.observation import Observation
 from optical_networking_gym.instrumentation.traces import write_step_trace_jsonl
-from optical_networking_gym.network.topology import TopologyModel
+from optical_networking_gym.network.topology import SpanUpdate, TopologyModel
 from optical_networking_gym.optical.qot_engine import QoTEngine
 from optical_networking_gym.features.reward_function import RewardFunction
 from optical_networking_gym.runtime.action_codec import (
@@ -51,7 +51,12 @@ class Simulator:
         )
         self.base_config = normalized_config
         self.config = normalized_config
+        # ``topology`` is the current physical layer; ``update_spans`` replaces
+        # it, and a full ``reset`` restores ``base_topology``.
+        self.base_topology = topology
         self.topology = topology
+        self.physical_layer_version = 0
+        self._changed_link_ids: set[int] = set()
         self.episode_length = episode_length
         self.capture_traffic_table = capture_traffic_table
         self.capture_step_trace = capture_step_trace
@@ -67,6 +72,9 @@ class Simulator:
         self.current_observation: np.ndarray | None = None
         self.current_mask: np.ndarray | None = None
         self.steps_completed = 0
+        # True after an episode ends: the request of the last step was
+        # processed, and the next one is prepared by the counter-only reset.
+        self._next_request_pending = False
         self._disrupted_service_ids: set[int] = set()
         self._captured_trace_steps: list[dict[str, object]] = []
         # Outcome of the most recent step, and an optional hook called right
@@ -94,8 +102,19 @@ class Simulator:
                 raise RuntimeError("cannot reset only episode counters before a full reset")
             self.statistics.reset_episode()
             self.steps_completed = 0
+            if self._next_request_pending:
+                try:
+                    self._prepare_next_request()
+                except StopIteration:
+                    self.current_request = None
+                    self.current_analysis = None
+                    self.current_observation = None
+                    self.current_mask = None
+                    raise RuntimeError("the traffic is exhausted; a full reset() is needed") from None
             return self._copy_observation(self.current_observation), self._build_reset_info()
 
+        if not (options is not None and options.get("keep_physical_layer")):
+            self._restore_base_topology()
         next_config = replace(self.base_config, seed=seed) if seed is not None else self.base_config
         self._apply_runtime_config(next_config)
 
@@ -111,6 +130,7 @@ class Simulator:
         self.current_observation = None
         self.current_mask = None
         self.steps_completed = 0
+        self._next_request_pending = False
         self._disrupted_service_ids = set()
         self._captured_trace_steps = []
         self.last_transition = None
@@ -173,6 +193,8 @@ class Simulator:
                 self.current_mask = None
             else:
                 next_mask = self.current_mask if self.current_mask is not None else None
+        else:
+            self._next_request_pending = True
 
         if self.capture_step_trace:
             post_step_state = self._trace_state_snapshot()
@@ -233,6 +255,94 @@ class Simulator:
             observation = self._copy_observation(self.current_observation)
 
         return observation, reward_value, terminated, truncated, info
+
+    def update_spans(
+        self,
+        updates: Iterable[SpanUpdate],
+        *,
+        refresh_active_services: bool = False,
+    ) -> TopologyModel:
+        """Change the fibre loss and/or amplifier NF of some spans in the
+        middle of a simulation (e.g. network aging), keeping the traffic state.
+
+        The new physical layer (``TopologyModel.with_span_updates``) becomes
+        ``self.topology`` for every helper, and ``physical_layer_version`` is
+        incremented. A pending request is re-analysed, so its mask,
+        observation and the QoT check of the next step see the new physics
+        (``request_analysed_callback`` is not called again). Established
+        services keep their stored QoT unless ``refresh_active_services`` is
+        set: then the services on the changed links are re-evaluated, and with
+        ``config.measure_disruptions`` they may be disrupted or dropped as on
+        any other QoT change.
+
+        The updates persist across ``reset(options={"only_episode_counters":
+        True})`` and ``reset(options={"keep_physical_layer": True})``; any
+        other ``reset`` restores ``base_topology``. An empty ``updates`` is a
+        no-op.
+
+        Returns:
+            The new topology.
+
+        Raises:
+            ValueError: If an update is invalid (see
+                ``TopologyModel.with_span_updates``). Nothing changes then.
+        """
+        updates = tuple(updates)
+        if not updates:
+            return self.topology
+        topology = self.topology.with_span_updates(updates)
+        changed_link_ids = {int(update.link_id) for update in updates}
+        self._set_topology(topology, changed_link_ids)
+        self._changed_link_ids |= changed_link_ids
+        self.physical_layer_version += 1
+        if self.state is None:
+            return topology
+        if refresh_active_services:
+            self._refresh_services_on_links(changed_link_ids)
+        if self.current_request is not None and not self._next_request_pending:
+            self._analyse_current_request()
+        return topology
+
+    def _set_topology(self, topology: TopologyModel, changed_link_ids: set[int]) -> None:
+        self.topology = topology
+        self.qot_engine.set_topology(topology, changed_link_ids=changed_link_ids)
+        # Analyses of the previous physical layer can no longer be hit (the
+        # cache key holds the engine's version); free them.
+        self.analysis_engine.clear_cache()
+        self.analysis_engine.topology = topology
+        self.action_mask_builder.topology = topology
+        self.observation_builder.topology = topology
+        self.reward_function.topology = topology
+        if self.state is not None:
+            self.state.topology = topology
+        if self.traffic_model is not None:
+            self.traffic_model.topology = topology
+
+    def _restore_base_topology(self) -> None:
+        if self.topology is not self.base_topology:
+            self._set_topology(self.base_topology, self._changed_link_ids)
+        self._changed_link_ids = set()
+        self.physical_layer_version = 0
+
+    def _refresh_services_on_links(self, link_ids: set[int]) -> None:
+        if self.state is None:
+            return
+        service_ids: set[int] = set()
+        for link_id in link_ids:
+            service_ids.update(self.state.link_active_service_ids[link_id])
+        if not service_ids:
+            return
+        impacted_ids = tuple(sorted(service_ids))
+        if self.config.measure_disruptions:
+            disrupted_services, dropped_qot = self._refresh_impacted_services(impacted_ids)
+            if self.statistics is not None and (disrupted_services or dropped_qot):
+                self.statistics.record_post_admission_effects(
+                    disrupted_services=disrupted_services,
+                    dropped_qot=dropped_qot,
+                )
+            return
+        updates = self.qot_engine.refresh_services(self.state, impacted_ids)
+        self.state.apply_qot_updates({update.service_id: update.to_mapping() for update in updates})
 
     def action_masks(self) -> np.ndarray | None:
         if not self.config.enable_action_mask or self.current_mask is None:
@@ -544,14 +654,21 @@ class Simulator:
                     )
         self.state.set_current_request(request)
         self.current_request = request
-        self.current_analysis = self.analysis_engine.build(self.state, request)
+        self._next_request_pending = False
+        self._analyse_current_request()
+        if self.request_analysed_callback is not None:
+            assert self.current_analysis is not None
+            self.request_analysed_callback(self.current_analysis)
+
+    def _analyse_current_request(self) -> None:
+        """(Re)build the analysis, observation and mask of the current request."""
+        assert self.state is not None and self.current_request is not None
+        self.current_analysis = self.analysis_engine.build(self.state, self.current_request)
         if self.config.enable_observation:
             self.current_observation = self.observation_builder.build_from_analysis(self.current_analysis)
         else:
             self.current_observation = self._empty_observation
         self.current_mask = self._mask_from_analysis(self.current_analysis)
-        if self.request_analysed_callback is not None:
-            self.request_analysed_callback(self.current_analysis)
 
     def _apply_action(
         self,

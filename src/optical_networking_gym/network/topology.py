@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass, replace
 from itertools import islice
 from pathlib import Path
 import math
@@ -159,6 +159,37 @@ class Span:
         return float(self.length_km * self.attenuation_db_per_km + self.input_loss_db + self.output_loss_db)
 
 
+def _positive_or_none(name: str, value: float | None) -> float | None:
+    if value is None:
+        return None
+    value = float(value)
+    if not (math.isfinite(value) and value > 0.0):
+        raise ValueError(f"{name} must be finite and positive, got {value!r}")
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class SpanUpdate:
+    """New fibre loss and/or amplifier noise figure of one span, e.g. to model
+    network aging during a simulation (see ``TopologyModel.with_span_updates``
+    and ``Simulator.update_spans``).
+
+    Attributes:
+        link_id: Link of the span.
+        span_index: Position of the span within the link (0 is the first span
+            after the link's source).
+        attenuation_db_per_km: New fibre loss coefficient; ``None`` keeps the
+            current value.
+        noise_figure_db: New noise figure of the span's amplifier; ``None``
+            keeps the current value.
+    """
+
+    link_id: int
+    span_index: int
+    attenuation_db_per_km: float | None = None
+    noise_figure_db: float | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class Link:
     id: int
@@ -314,6 +345,47 @@ class TopologyModel:
             link_id_by_endpoints=link_id_by_endpoints,
             link_lengths_km=link_lengths_km,
         )
+
+    def with_span_updates(self, updates: Iterable[SpanUpdate]) -> "TopologyModel":
+        """A copy of the model with the fibre loss and/or amplifier NF of some
+        spans replaced. The model itself is unchanged.
+
+        Updates are applied in order, so a later update of the same span wins.
+        Everything else (nodes, link ids and lengths, span lengths, lumped
+        losses, gain ripple, path records) is shared with this model. The
+        model is returned as is when ``updates`` is empty.
+
+        Raises:
+            ValueError: If a link id or span index is out of range, or a value
+                is not finite and positive. Nothing is applied then.
+        """
+        spans_by_link: dict[int, list[Span]] = {}
+        for update in updates:
+            link_id = int(update.link_id)
+            span_index = int(update.span_index)
+            if not 0 <= link_id < len(self.links):
+                raise ValueError(f"unknown link id {link_id}")
+            spans = spans_by_link.get(link_id)
+            if spans is None:
+                spans = spans_by_link[link_id] = list(self.links[link_id].spans)
+            if not 0 <= span_index < len(spans):
+                raise ValueError(
+                    f"span index {span_index} out of range for link {link_id} ({len(spans)} spans)"
+                )
+            span = spans[span_index]
+            attenuation = _positive_or_none("attenuation_db_per_km", update.attenuation_db_per_km)
+            noise_figure = _positive_or_none("noise_figure_db", update.noise_figure_db)
+            spans[span_index] = replace(
+                span,
+                attenuation_db_per_km=span.attenuation_db_per_km if attenuation is None else attenuation,
+                noise_figure_db=span.noise_figure_db if noise_figure is None else noise_figure,
+            )
+        if not spans_by_link:
+            return self
+        links = list(self.links)
+        for link_id, spans in spans_by_link.items():
+            links[link_id] = replace(links[link_id], spans=tuple(spans))
+        return replace(self, links=tuple(links))
 
     @property
     def node_count(self) -> int:

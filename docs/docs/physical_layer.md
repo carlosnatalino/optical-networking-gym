@@ -106,6 +106,92 @@ heterogeneous physical layer. The engine then accounts for:
 - EDFA gain ripple, as a channel-dependent power offset that accumulates
   within a link and is reset by per-channel equalisation at each ROADM.
 
+## Runtime physical-layer updates (aging)
+
+Aging studies change the fibre loss and the amplifier noise figure of some
+spans *during* a simulation, while the traffic state (established lightpaths,
+spectrum, time) is kept. `Simulator.update_spans` (and `OpticalEnv.update_spans`,
+which delegates to it) does this through the public API:
+
+```python
+from optical_networking_gym import SpanUpdate
+
+env.reset(seed=0)
+...  # run part of an episode
+aged = env.update_spans(
+    [
+        SpanUpdate(link_id=3, span_index=0, attenuation_db_per_km=0.23),
+        SpanUpdate(link_id=3, span_index=1, noise_figure_db=6.0),
+        SpanUpdate(link_id=7, span_index=2, attenuation_db_per_km=0.21, noise_figure_db=5.5),
+    ],
+    refresh_active_services=False,
+)
+assert env.simulator.topology is aged
+env.simulator.physical_layer_version  # 1
+```
+
+A `SpanUpdate` field left at `None` keeps the current value.
+`TopologyModel.with_span_updates(updates)` returns the updated model without
+changing the original. Updates are applied in order, so a later update of the
+same span wins, and everything else (nodes, links, span lengths, lumped
+losses, gain ripple, path records) is shared with the original. Span length,
+lumped losses and gain ripple cannot be updated.
+
+Semantics of `update_spans(updates, *, refresh_active_services=False)`:
+
+- **Validation.** Every update is validated before anything changes: the link
+  id and span index must be in range, and the values must be finite and
+  positive. Otherwise `ValueError` is raised and nothing changes. An empty
+  list is a no-op.
+- **Propagation.** `simulator.topology` becomes the new model, for every
+  helper: the QoT engine, request analysis, action mask, observation, reward,
+  runtime state and traffic model. `simulator.physical_layer_version` (0 at
+  start) is incremented on every non-empty call.
+- **Pending request.** If a request is waiting for an action, its analysis,
+  action mask and observation are rebuilt, so the policy and the QoT check of
+  the next step (`mask_mode="resource_and_qot"`) see the new physics.
+  `request_analysed_callback` / `on_request_analysed` is not called again.
+- **Established lightpaths.** Their stored QoT is unchanged by default. With
+  `refresh_active_services=True`, the QoT of the services on the changed links
+  is recomputed. If `measure_disruptions` is set, those that no longer meet
+  their threshold are disrupted (or dropped with `drop_on_disruption`) by the
+  same logic as for any other QoT change, and counted in the statistics.
+- **Lifetime.** Updates persist across `reset(options={"only_episode_counters":
+  True})` and `reset(options={"keep_physical_layer": True})`. Any other
+  `reset()` restores the topology passed to the constructor
+  (`simulator.base_topology`) and sets the version back to 0. An update made
+  before the first `reset()` is therefore lost unless that reset keeps the
+  physical layer.
+- **Exactness.** After any sequence of updates, the engine computes exactly
+  (bit for bit) what a freshly built engine on
+  `base_topology.with_span_updates(all updates)` computes in the same runtime
+  state, with either kernel, every `nli_modulation_correction` and with or
+  without interferers.
+- **Cost.** Only the changed links are re-read
+  (`QoTEngine.set_topology(topology, changed_link_ids=...)`), and only the
+  cached routes through them are invalidated; they are rebuilt lazily when
+  they are next evaluated. Updating two spans on nobel-eu takes about 0.07 ms,
+  and at most about 0.4 ms when every k-shortest path is cached. Rebuilding
+  the analysis of the pending request costs as much as preparing a new
+  request (a few ms on nobel-eu), so pass the updates that happen at the
+  same time in one call.
+
+The aging process itself (which spans age, by how much and when) is up to the
+caller. A typical loop updates the spans every `N` requests (`aging_model` and
+`policy` stand for your own code):
+
+```python
+for step in range(episode_length):
+    if step and step % 500 == 0:
+        env.update_spans(aging_model.updates_at(env.simulator.state.current_time))
+    action = policy(env)
+    env.step(action)
+```
+
+The request-analysis cache key holds `QoTEngine.topology_version`, so an
+analysis computed under an older physical layer is never returned, even when
+`QoTEngine.set_topology` is called directly.
+
 ## Noise breakdown and environment hooks
 
 `QoTEngine.noise_breakdown(...)` and `service_noise_breakdown(state,
