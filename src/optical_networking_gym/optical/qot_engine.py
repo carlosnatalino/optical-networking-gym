@@ -597,6 +597,54 @@ class QoTEngine:
             worst_link_nli_share=metrics.worst_link_nli_share,
         )
 
+    def summarize_candidates_at(
+        self,
+        *,
+        state: RuntimeState,
+        service_id: int,
+        path: PathRecord,
+        candidates: Sequence[tuple[Modulation, int, int]],
+        launch_power: float | None = None,
+    ) -> list[QoTCandidateSummary]:
+        """``summarize_candidate_at`` for several candidates of one route.
+
+        ``candidates`` holds ``(modulation, service_slot_start,
+        service_num_slots)`` tuples. The route's interferers are prepared once
+        for all of them, and each result is bit-identical to the
+        corresponding ``summarize_candidate_at`` call.
+        """
+        prepared = self._prepare_candidate_summary_inputs(state, path)
+        power = self._launch_power if launch_power is None else launch_power
+        summaries: list[QoTCandidateSummary] = []
+        for modulation, service_slot_start, service_num_slots in candidates:
+            bandwidth = self.config.frequency_slot_bandwidth * service_num_slots
+            center_frequency = (
+                self.config.frequency_start
+                + self.config.frequency_slot_bandwidth * service_slot_start
+                + self.config.frequency_slot_bandwidth * (service_num_slots / 2.0)
+            )
+            metrics = self._metrics_from_prepared(
+                prepared,
+                service_id=service_id,
+                center_frequency=center_frequency,
+                bandwidth=bandwidth,
+                launch_power=power,
+                modulation=modulation,
+            )
+            threshold = modulation.minimum_osnr + self.config.margin
+            summaries.append(
+                QoTCandidateSummary(
+                    osnr=metrics.osnr,
+                    ase=metrics.ase,
+                    nli=metrics.nli,
+                    meets_threshold=metrics.osnr >= threshold,
+                    osnr_margin=metrics.osnr - threshold,
+                    nli_share=metrics.total_nli_share,
+                    worst_link_nli_share=metrics.worst_link_nli_share,
+                )
+            )
+        return summaries
+
     def summarize_candidate_starts(
         self,
         *,
@@ -879,7 +927,25 @@ class QoTEngine:
         state: RuntimeState,
         modulation: Modulation | None,
     ) -> _MetricsSummary:
-        prepared = self._prepare_candidate_summary_inputs(state, path)
+        return self._metrics_from_prepared(
+            self._prepare_candidate_summary_inputs(state, path),
+            service_id=service_id,
+            center_frequency=center_frequency,
+            bandwidth=bandwidth,
+            launch_power=launch_power,
+            modulation=modulation,
+        )
+
+    def _metrics_from_prepared(
+        self,
+        prepared: _PreparedCandidateSummaryInputs,
+        *,
+        service_id: int,
+        center_frequency: float,
+        bandwidth: float,
+        launch_power: float,
+        modulation: Modulation | None,
+    ) -> _MetricsSummary:
         _, _, _, acc_gsnr, acc_ase, acc_nli, worst_link_nli_share = path_noise(
             prepared.span_offsets,
             prepared.span_lengths,

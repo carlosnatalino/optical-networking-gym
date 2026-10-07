@@ -15,6 +15,12 @@
   (`jocn_benchmark`, `RESOURCE_ONLY`, no observation or mask, a heuristic
   that evaluates the QoT itself) a step takes 0.47 ms instead of 0.82 ms
   (−43%), with the same valid starts, slot counts, decisions and GSNRs.
+- `QoTEngine.summarize_candidates_at(state=, service_id=, path=, candidates=,
+  launch_power=None)` evaluates several `(modulation, service_slot_start,
+  service_num_slots)` candidates of one route with a single preparation of
+  the route's interferers. Each result is bit-identical to
+  `summarize_candidate_at`. On a loaded nobel-eu network a candidate costs
+  15 µs instead of 26 µs when the 6 formats of a route are evaluated together.
 
 ### Changed
 
