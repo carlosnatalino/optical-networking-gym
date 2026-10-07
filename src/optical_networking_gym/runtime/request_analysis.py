@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 import math
 
@@ -288,9 +289,13 @@ class RequestAnalysisEngine:
         self.qot_engine = qot_engine
         self.cache_hits = 0
         self.cache_misses = 0
+        self.cache_evictions = 0
         # Keyed by the runtime state, its allocation version and the QoT
         # engine's physical-layer version (``QoTEngine.topology_version``).
-        self._analysis_cache: dict[tuple[int, int, int, int, int, float, bool], RequestAnalysis] = {}
+        # Least recently used first; bounded by ``config.request_buffer_limit``.
+        self._analysis_cache: OrderedDict[tuple[int, int, int, int, int, float, bool], RequestAnalysis] = (
+            OrderedDict()
+        )
         self._path_link_indices: dict[int, np.ndarray] = {
             path.id: np.asarray(path.link_ids, dtype=np.intp) for path in topology.paths
         }
@@ -334,16 +339,30 @@ class RequestAnalysisEngine:
         )
         cached = self._analysis_cache.get(cache_key)
         if cached is not None:
+            self._analysis_cache.move_to_end(cache_key)
             self.cache_hits += 1
             return cached
 
         analysis = self._build_analysis(state, request, include_inspection=needs_inspection)
-        self._analysis_cache[cache_key] = analysis
         self.cache_misses += 1
+        # Read at every insert, so a config reassigned by the simulator applies at once.
+        limit = self.config.request_buffer_limit
+        if limit != 0:
+            self._analysis_cache[cache_key] = analysis
+            if limit > 0:
+                while len(self._analysis_cache) > limit:
+                    self._analysis_cache.popitem(last=False)
+                    self.cache_evictions += 1
         return analysis
+
+    @property
+    def cache_size(self) -> int:
+        """Number of analyses currently held in the cache."""
+        return len(self._analysis_cache)
 
     def clear_cache(self) -> None:
         self._analysis_cache.clear()
+        self.cache_evictions = 0
 
     def _build_analysis(
         self,

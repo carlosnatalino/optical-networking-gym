@@ -76,6 +76,10 @@ class Simulator:
         # processed, and the next one is prepared by the counter-only reset.
         self._next_request_pending = False
         self._disrupted_service_ids: set[int] = set()
+        # One record per step when ``capture_step_trace`` is on, with three full
+        # network snapshots each. This is an export, so it is never truncated:
+        # its memory grows with every arrival (unlike the request-analysis
+        # cache, bounded by ``config.request_buffer_limit``).
         self._captured_trace_steps: list[dict[str, object]] = []
         # Outcome of the most recent step, and an optional hook called right
         # after the action is applied, while the state still reflects the
@@ -377,6 +381,12 @@ class Simulator:
         return self.traffic_model.save_table_jsonl(file_path)
 
     def export_step_trace(self) -> dict[str, object]:
+        """Trace of every step since the last full reset.
+
+        Requires ``capture_step_trace``. Each step holds three full network
+        snapshots; the steps are kept in memory and never truncated, so their
+        memory grows with every arrival.
+        """
         if not self.capture_step_trace:
             raise RuntimeError("capture_step_trace must be enabled to export a step trace")
         accepted = 0

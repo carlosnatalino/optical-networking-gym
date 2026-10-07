@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.0 (unreleased)
+
+### Changed
+
+- The request-analysis cache is bounded: new `ScenarioConfig.request_buffer_limit`
+  (default `8`; `-1` = unlimited, the behaviour of 0.3.0 and earlier; `0`
+  disables the cache), accepted by `build_scenario` overrides and `make_env`.
+  The `RequestAnalysisEngine` evicts the least recently used analysis first and
+  reports `cache_size` and `cache_evictions`. The cache key holds the
+  allocation version, so a normal step loop never hits it, and each entry takes
+  about 0.2–0.3 MB on nobel-eu with 320 slots: the unbounded cache grew to
+  about 0.9 GB after 3,000 arrivals and 8.7 GB after 120,000. With the default
+  the memory stays flat (about 75 MB over 12,000 arrivals with the
+  `jocn_benchmark` defaults). This changes memory use only: results are
+  bit-identical for every limit, and the field is not part of
+  `runtime_structure_key()`. The opt-in capture buffers
+  (`capture_traffic_table`, `capture_step_trace`) remain unbounded, as
+  documented.
+
 ## 0.3.0
 
 ### Added

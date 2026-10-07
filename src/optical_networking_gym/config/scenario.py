@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import numbers
 from pathlib import Path
 
 from collections.abc import Sequence
@@ -83,6 +84,11 @@ class ScenarioConfig:
     include_mask_in_info: bool = True
     capture_traffic_table: bool = False
     capture_step_trace: bool = False
+    # Maximum number of request analyses kept in memory by the RequestAnalysisEngine
+    # (least recently used are evicted first). -1 keeps every analysis (the behaviour of
+    # 0.3.0 and earlier); 0 disables the cache. The cache only memoizes: results do not
+    # depend on this value.
+    request_buffer_limit: int = 8
     seed: int | None = None
 
     def __post_init__(self) -> None:
@@ -178,6 +184,13 @@ class ScenarioConfig:
             object.__setattr__(self, "traffic_source", self._build_default_traffic_source())
         if self.seed is not None and self.seed < 0:
             raise ValueError("seed must be non-negative")
+        if (
+            not isinstance(self.request_buffer_limit, numbers.Integral)
+            or isinstance(self.request_buffer_limit, bool)
+            or self.request_buffer_limit < -1
+        ):
+            raise ValueError("request_buffer_limit must be -1 (unlimited) or a non-negative integer")
+        object.__setattr__(self, "request_buffer_limit", int(self.request_buffer_limit))
         if self.traffic_mode is TrafficMode.STATIC and self.traffic_source is None:
             raise ValueError("traffic_source is required when traffic_mode is static")
 

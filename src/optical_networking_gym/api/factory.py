@@ -55,6 +55,7 @@ def make_env(
     include_mask_in_info: bool = True,
     capture_traffic_table: bool = False,
     capture_step_trace: bool = False,
+    request_buffer_limit: int | object = _UNSET,
 ) -> OpticalEnv:
     """Build an :class:`OpticalEnv` from a scenario preset, complete config, or flat facade.
 
@@ -98,7 +99,11 @@ def make_env(
     Instrumentation:
         `capture_traffic_table`, `capture_step_trace`: Optional capture paths
         for replay/debug artifacts. They stay disabled by default because they
-        add runtime and allocation overhead.
+        add runtime and allocation overhead. Their memory grows with every
+        arrival (they are exports and are never truncated).
+        `request_buffer_limit`: Number of request analyses memoized by the
+        request-analysis engine (least recently used are evicted); `-1` keeps
+        every analysis, `0` disables the cache. Results do not depend on it.
     """
     if config is not None or isinstance(scenario, ScenarioConfig):
         if config is not None and scenario is not None:
@@ -140,6 +145,7 @@ def make_env(
         _add_if_set(scenario_overrides, "launch_power_dbm", launch_power_dbm)
         _add_if_set(scenario_overrides, "margin", margin)
         _add_if_set(scenario_overrides, "bandwidth", bandwidth)
+        _add_if_set(scenario_overrides, "request_buffer_limit", request_buffer_limit)
         resolved_config = build_scenario(scenario, **scenario_overrides)
     else:
         if topology_name is None:
@@ -186,6 +192,7 @@ def make_env(
             include_mask_in_info=include_mask_in_info,
             capture_traffic_table=capture_traffic_table,
             capture_step_trace=capture_step_trace,
+            request_buffer_limit=_value_or_default(request_buffer_limit, 8),
             seed=_value_or_default(seed, 42),
         )
 
