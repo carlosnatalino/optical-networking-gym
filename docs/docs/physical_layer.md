@@ -26,6 +26,60 @@ difference is disregarded. Modelling each direction on its own would also
 require a per-direction inventory (span order, amplifiers, connectors, ripple)
 and XCI from the co-directional halves of the interferers only.
 
+## Spectral grid and channel width
+
+The spectrum is a grid of `num_spectrum_resources` slots of
+`frequency_slot_bandwidth` Hz starting at `frequency_start`. The slot width is
+set **only** by `frequency_slot_bandwidth`; the other two width fields of
+`ScenarioConfig` are derived from it and validated against it:
+
+| Field | Unit | Value |
+|---|---|---|
+| `frequency_slot_bandwidth` | Hz | The slot width (source of truth). |
+| `channel_width` | GHz | `frequency_slot_bandwidth / 1e9` when `None` (the default); a different value raises `ValueError`. |
+| `bandwidth` | Hz | `num_spectrum_resources × frequency_slot_bandwidth` when `None` (the default); a different value raises `ValueError`. |
+
+`build_scenario` re-derives `channel_width` and `bandwidth` when an override
+changes `frequency_slot_bandwidth` or `num_spectrum_resources`. A plain
+`dataclasses.replace` carries the resolved values over, so set them to `None`
+when changing the grid that way.
+
+**Slots of a request.** A request of `bit_rate` Gb/s with a format of
+`spectral_efficiency` b/s/Hz needs
+`ceil(bit_rate / (spectral_efficiency × slot width in GHz))` slots. The guard
+slot is not part of the lightpath: it is reserved after it
+(`occupied_slot_end_exclusive` is one past the last service slot, unless the
+lightpath ends at the last slot of the grid).
+
+**Signal bandwidth in the QoT.** A lightpath of `n` slots starting at slot `s`
+is modelled as a signal of bandwidth `n × frequency_slot_bandwidth`, centred
+at `frequency_start + frequency_slot_bandwidth × (s + n/2)`. The occupied
+bandwidth stands in for the symbol rate: for example, a 40 Gb/s 64QAM
+lightpath uses one 12.5 GHz slot and is modelled as a 12.5 GHz signal.
+
+**Launch power.** The launch power is per channel (`launch_power_dbm`, or the
+request's own value), so the power spectral density `P/B` of a lightpath
+decreases as its width grows.
+
+**Interferer PSD.** The NLI noise-to-signal ratio of a span is
+`(P/B_cut)² × [asinh(·) of the SCI + Σ φ_j]`, where `φ_j` is the
+cross-channel interference (XCI) of interferer `j`. With
+`nli_interferer_psd="cut"` (the default, kept for historical comparability),
+every interferer is assumed to have the PSD of the channel under test, so the
+width of the channel under test also changes the interference attributed to
+its neighbours. `nli_interferer_psd="actual"` weights each `φ_j` by
+`(G_j/G_cut)²`, with `G_j` the interferer's own PSD, and is the physically
+consistent choice.
+
+> Observation (TNSM study, nobel-eu, 140 Erlang, 0 dBm, `cut`). Evaluating the same
+> lightpath as a channel two slots wider changes its GSNR by −0.02 to −1.36 dB (−0.81 dB
+> on average) on an empty network (more ASE), but by +1.75 dB on average on a loaded one
+> (lower PSD, hence less XCI from every interferer).
+
+These modelling choices (occupied bandwidth instead of the symbol rate, a
+fixed power per channel instead of a fixed PSD, and `"cut"` as the default)
+are kept because changing any of them changes every result.
+
 ## Scenario options
 
 | `ScenarioConfig` field | Default | Effect |

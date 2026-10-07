@@ -194,7 +194,6 @@ class SimulationUtils:
                 frequency_slot_bandwidth=DEFAULT_FREQUENCY_SLOT_BANDWIDTH,
                 launch_power_dbm=launch_power_dbm,
                 margin=margin,
-                bandwidth=num_spectrum_resources * DEFAULT_FREQUENCY_SLOT_BANDWIDTH,
                 modulations=modulations,
                 modulations_to_consider=modulations_to_consider,
                 enable_observation=gen_observation,

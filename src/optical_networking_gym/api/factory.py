@@ -179,7 +179,7 @@ def make_env(
             qot_constraint=qot_constraint,
             measure_disruptions=measure_disruptions,
             drop_on_disruption=drop_on_disruption,
-            channel_width=_value_or_default(channel_width, 12.5),
+            channel_width=_value_or_default(channel_width, None),
             frequency_start=_value_or_default(frequency_start, (3e8 / 1565e-9)),
             frequency_slot_bandwidth=_value_or_default(frequency_slot_bandwidth, 12.5e9),
             launch_power_dbm=_value_or_default(launch_power_dbm, 0.0),

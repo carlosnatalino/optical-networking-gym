@@ -18,6 +18,23 @@
   `runtime_structure_key()`. The opt-in capture buffers
   (`capture_traffic_table`, `capture_step_trace`) remain unbounded, as
   documented.
+- The slot width has one source of truth, `frequency_slot_bandwidth` (Hz).
+  `ScenarioConfig.channel_width` now defaults to `None` and is derived as
+  `frequency_slot_bandwidth / 1e9`; an explicit value must match it
+  (`rel_tol=1e-9`), else `ValueError`. Before, setting only
+  `frequency_slot_bandwidth=6.25e9` silently computed slot counts for 12.5 GHz
+  slots (a 100 Gb/s 16QAM request got 2 slots instead of 4) while the grid and
+  the QoT used 6.25 GHz. `bandwidth` must likewise equal
+  `num_spectrum_resources × frequency_slot_bandwidth` when given.
+  `build_scenario` re-derives both when an override changes the grid (so
+  `num_spectrum_resources` overrides of the presets stay valid), and the
+  presets, `build_nobel_eu_graph_load_scenario` (which hard-coded
+  `bandwidth=4e12` for any slot count) and `make_env` no longer pass them.
+  Results of every consistent configuration (all presets) are unchanged.
+  New "Spectral grid and channel width" section in
+  `docs/docs/physical_layer.md` documents the width semantics of the slot
+  count, the QoT signal bandwidth, the per-channel launch power and the
+  `nli_interferer_psd="cut"` approximation.
 
 ## 0.3.0
 

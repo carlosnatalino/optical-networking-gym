@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 import numbers
 from pathlib import Path
 
@@ -41,7 +42,13 @@ class ScenarioConfig:
     qot_constraint: str = "ASE+NLI"
     measure_disruptions: bool = False
     drop_on_disruption: bool = False
-    channel_width: float = 12.5
+    # Width of one frequency slot in GHz. It is derived from
+    # ``frequency_slot_bandwidth`` (the single source of truth, in Hz) when
+    # ``None``; when given, it must equal ``frequency_slot_bandwidth / 1e9``.
+    # It sets the slots a request needs, ceil(bit_rate / (spectral_efficiency
+    # x channel_width)), while the slot grid and the QoT use
+    # ``frequency_slot_bandwidth``.
+    channel_width: float | None = None
     frequency_start: float = (3e8 / 1565e-9)
     frequency_slot_bandwidth: float = 12.5e9
     launch_power_dbm: float = 0.0
@@ -76,6 +83,8 @@ class ScenarioConfig:
     roadm_express_osnr_db: float | None = None
     transceiver_osnr_db: float | None = None
     margin: float = 0.0
+    # Total spectrum (Hz): ``num_spectrum_resources x frequency_slot_bandwidth``
+    # when ``None``; when given, it must equal that product.
     bandwidth: float | None = None
     modulations: tuple[Modulation, ...] = ()
     modulations_to_consider: int | None = None
@@ -108,10 +117,15 @@ class ScenarioConfig:
             raise ValueError("default_attenuation_db_per_km must be positive")
         if self.default_noise_figure_db <= 0:
             raise ValueError("default_noise_figure_db must be positive")
-        if self.channel_width <= 0:
-            raise ValueError("channel_width must be positive")
         if self.frequency_slot_bandwidth <= 0:
             raise ValueError("frequency_slot_bandwidth must be positive")
+        if self.channel_width is None:
+            object.__setattr__(self, "channel_width", self.frequency_slot_bandwidth / 1e9)
+        elif not math.isclose(self.channel_width * 1e9, self.frequency_slot_bandwidth, rel_tol=1e-9):
+            raise ValueError(
+                "channel_width (GHz) must equal frequency_slot_bandwidth (Hz) / 1e9; "
+                "set only frequency_slot_bandwidth"
+            )
         if self.nli_interferer_psd not in _VALID_INTERFERER_PSD_MODES:
             raise ValueError(
                 "nli_interferer_psd must be one of: " + ", ".join(sorted(_VALID_INTERFERER_PSD_MODES))
@@ -143,14 +157,14 @@ class ScenarioConfig:
             raise ValueError(
                 "qot_constraint must be one of: " + ", ".join(sorted(_VALID_QOT_CONSTRAINTS))
             )
+        grid_bandwidth = self.num_spectrum_resources * self.frequency_slot_bandwidth
         if self.bandwidth is None:
-            object.__setattr__(
-                self,
-                "bandwidth",
-                self.num_spectrum_resources * self.frequency_slot_bandwidth,
+            object.__setattr__(self, "bandwidth", grid_bandwidth)
+        elif not math.isclose(self.bandwidth, grid_bandwidth, rel_tol=1e-9):
+            raise ValueError(
+                "bandwidth (Hz) must equal num_spectrum_resources x frequency_slot_bandwidth; "
+                "leave it unset to derive it"
             )
-        elif self.bandwidth <= 0:
-            raise ValueError("bandwidth must be positive")
         if self.modulations_to_consider is None:
             object.__setattr__(self, "modulations_to_consider", len(self.modulations))
         elif self.modulations_to_consider < 0:
@@ -193,6 +207,13 @@ class ScenarioConfig:
         object.__setattr__(self, "request_buffer_limit", int(self.request_buffer_limit))
         if self.traffic_mode is TrafficMode.STATIC and self.traffic_source is None:
             raise ValueError("traffic_source is required when traffic_mode is static")
+
+    @property
+    def resolved_channel_width(self) -> float:
+        """``channel_width`` after ``__post_init__`` resolution (never ``None``)."""
+        value = self.channel_width
+        assert value is not None  # resolved in __post_init__
+        return value
 
     @property
     def resolved_modulations_to_consider(self) -> int:

@@ -160,7 +160,7 @@ class RequestAnalysis:
                 modulation.spectral_efficiency for modulation in self.config.modulations
             )
             max_bit_rate = (
-                self.config.num_spectrum_resources * self.config.channel_width * max_spectral_efficiency
+                self.config.num_spectrum_resources * self.config.resolved_channel_width * max_spectral_efficiency
             )
             self._request_features = np.array(
                 [float(np.clip(self.request.bit_rate / max_bit_rate, 0.0, 1.0))],
@@ -387,7 +387,7 @@ class RequestAnalysisEngine:
                 compute_required_slots(
                     bit_rate=request.bit_rate,
                     spectral_efficiency=modulation.spectral_efficiency,
-                    channel_width=self.config.channel_width,
+                    channel_width=self.config.resolved_channel_width,
                 )
                 for modulation in self.config.modulations
             ],
