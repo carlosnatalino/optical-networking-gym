@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.0 (unreleased)
+## 0.4.0
 
 ### Added
 
@@ -50,6 +50,8 @@
   `num_spectrum_resources` overrides of the presets stay valid), and the
   presets, `build_nobel_eu_graph_load_scenario` (which hard-coded
   `bandwidth=4e12` for any slot count) and `make_env` no longer pass them.
+  A `dataclasses.replace` that changes the grid carries the resolved values
+  over and now raises; pass `channel_width=None, bandwidth=None` with it.
   Results of every consistent configuration (all presets) are unchanged.
   New "Spectral grid and channel width" section in
   `docs/docs/physical_layer.md` documents the width semantics of the slot
