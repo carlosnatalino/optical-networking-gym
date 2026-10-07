@@ -16,6 +16,7 @@ from optical_networking_gym.contracts.modulation import Modulation
 _VALID_QOT_CONSTRAINTS = frozenset({"ASE+NLI", "DIST"})
 _VALID_INTERFERER_PSD_MODES = frozenset({"cut", "actual"})
 _VALID_NLI_MODULATION_CORRECTIONS = frozenset({"egn_xci", "cfm2", "gn"})
+_VALID_ANALYSIS_DETAILS = frozenset({"full", "resources"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +92,15 @@ class ScenarioConfig:
     enable_observation: bool = True
     enable_action_mask: bool = True
     include_mask_in_info: bool = True
+    # What the RequestAnalysisEngine computes for each request. "full" computes
+    # everything. "resources" computes only the paths, formats, required slots
+    # and resource-valid starts, plus the QoT arrays when the mask mode is
+    # RESOURCE_AND_QOT with a GSNR constraint; the fragmentation damage, link
+    # metrics, route cuts/RSS and free-run statistics are zero-filled. It
+    # requires enable_observation=False, and the fragmentation terms of
+    # StepTransition (fragmentation_*) and of the reward are then 0. A build
+    # that asks for inspection (Observation.build_snapshot) is always full.
+    analysis_detail: str = "full"
     capture_traffic_table: bool = False
     capture_step_trace: bool = False
     # Maximum number of request analyses kept in memory by the RequestAnalysisEngine
@@ -153,6 +163,12 @@ class ScenarioConfig:
             value = getattr(self, name)
             if value is not None and not np.isfinite(value):
                 raise ValueError(f"{name} must be finite when provided")
+        if self.analysis_detail not in _VALID_ANALYSIS_DETAILS:
+            raise ValueError(
+                "analysis_detail must be one of: " + ", ".join(sorted(_VALID_ANALYSIS_DETAILS))
+            )
+        if self.analysis_detail == "resources" and self.enable_observation:
+            raise ValueError('analysis_detail="resources" requires enable_observation=False')
         if self.qot_constraint not in _VALID_QOT_CONSTRAINTS:
             raise ValueError(
                 "qot_constraint must be one of: " + ", ".join(sorted(_VALID_QOT_CONSTRAINTS))
@@ -293,4 +309,5 @@ class ScenarioConfig:
             self.enable_observation,
             self.enable_action_mask,
             self.include_mask_in_info,
+            self.analysis_detail,
         )

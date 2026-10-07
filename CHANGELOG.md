@@ -2,6 +2,20 @@
 
 ## 0.4.0 (unreleased)
 
+### Added
+
+- `ScenarioConfig.analysis_detail` (`"full"` by default, or `"resources"`,
+  also a `make_env` argument). `"resources"` builds a lean request analysis:
+  paths, formats, required slots, resource-valid starts and, with
+  `RESOURCE_AND_QOT`, the QoT arrays, while the fragmentation damage, link
+  metrics, route cuts/RSS and free-run statistics are zero-filled (same shapes
+  and dtypes). It requires `enable_observation=False`; the fragmentation terms
+  of `StepTransition` and of the reward are then 0. A build that asks for
+  inspection (`Observation.build_snapshot`) stays full. On nobel-eu
+  (`jocn_benchmark`, `RESOURCE_ONLY`, no observation or mask, a heuristic
+  that evaluates the QoT itself) a step takes 0.47 ms instead of 0.82 ms
+  (−43%), with the same valid starts, slot counts, decisions and GSNRs.
+
 ### Changed
 
 - The request-analysis cache is bounded: new `ScenarioConfig.request_buffer_limit`
@@ -35,6 +49,10 @@
   `docs/docs/physical_layer.md` documents the width semantics of the slot
   count, the QoT signal bandwidth, the per-channel launch power and the
   `nli_interferer_psd="cut"` approximation.
+- The request analysis selects the format window directly from `k_paths`-row
+  work arrays instead of padding eight arrays per request (bit-identical
+  output; about 4% faster in the lean loop above, 1% with the preset
+  defaults).
 
 ## 0.3.0
 

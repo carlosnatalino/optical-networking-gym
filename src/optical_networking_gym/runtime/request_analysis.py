@@ -372,6 +372,9 @@ class RequestAnalysisEngine:
         include_inspection: bool,
     ) -> RequestAnalysis:
         paths = self.topology.get_paths_by_ids(request.source_id, request.destination_id)[: self.config.k_paths]
+        # Lean analysis: only what the mask and the QoT need (the inspection
+        # arrays and the observation features need the full one).
+        lean = self.config.analysis_detail == "resources" and not include_inspection
         total_slots = self.config.num_spectrum_resources
         max_paths = self.config.k_paths
         full_modulation_count = len(self.config.modulations)
@@ -395,8 +398,11 @@ class RequestAnalysisEngine:
         )
 
         common_free_masks = np.zeros((max_paths, total_slots), dtype=np.bool_)
-        link_metrics = _build_link_metrics(state, self.topology, total_slots)
-        mean_link_entropy = float(link_metrics[:, 1].mean()) if link_metrics.size else 0.0
+        link_metrics: np.ndarray | None = None
+        mean_link_entropy = 0.0
+        if not lean:
+            link_metrics = _build_link_metrics(state, self.topology, total_slots)
+            mean_link_entropy = float(link_metrics[:, 1].mean()) if link_metrics.size else 0.0
         path_free_runs: list[_FreeRunAnalysis] = []
 
         for path_index, path in enumerate(paths):
@@ -407,26 +413,22 @@ class RequestAnalysisEngine:
                     state.slot_allocation[self._path_link_indices[path.id], :] == -1,
                     axis=0,
                 )
-            path_free_runs.append(_analyze_free_mask(common_free_masks[path_index, :]))
+            if not lean:
+                path_free_runs.append(_analyze_free_mask(common_free_masks[path_index, :]))
 
-        resource_valid_full = np.zeros((len(paths), full_modulation_count, total_slots), dtype=np.bool_)
-        qot_valid_full = np.zeros((len(paths), full_modulation_count, total_slots), dtype=np.bool_)
-        osnr_margin_full = np.full((len(paths), full_modulation_count, total_slots), np.nan, dtype=np.float32)
-        nli_share_full = np.full((len(paths), full_modulation_count, total_slots), np.nan, dtype=np.float32)
-        worst_link_nli_share_full = np.full(
-            (len(paths), full_modulation_count, total_slots),
-            np.nan,
-            dtype=np.float32,
-        )
-        required_slots_full = np.zeros((len(paths), full_modulation_count), dtype=np.int16)
-        fragmentation_damage_num_blocks_full = np.zeros(
-            (len(paths), full_modulation_count, total_slots),
-            dtype=np.float32,
-        )
-        fragmentation_damage_largest_block_full = np.zeros(
-            (len(paths), full_modulation_count, total_slots),
-            dtype=np.float32,
-        )
+        # The work arrays have k_paths rows even when the request has fewer
+        # paths, so selecting the formats yields the final (padded) shape: the
+        # rows of missing paths keep the fill value.
+        work_shape = (max_paths, full_modulation_count, total_slots)
+        selected_shape = (max_paths, selected_count, total_slots)
+        resource_valid_full = np.zeros(work_shape, dtype=np.bool_)
+        qot_valid_full = np.zeros(work_shape, dtype=np.bool_)
+        osnr_margin_full = np.full(work_shape, np.nan, dtype=np.float32)
+        nli_share_full = np.full(work_shape, np.nan, dtype=np.float32)
+        worst_link_nli_share_full = np.full(work_shape, np.nan, dtype=np.float32)
+        required_slots_full = np.zeros((max_paths, full_modulation_count), dtype=np.int16)
+        fragmentation_damage_num_blocks_full = np.zeros(work_shape, dtype=np.float32)
+        fragmentation_damage_largest_block_full = np.zeros(work_shape, dtype=np.float32)
 
         request_launch_power = self.qot_engine.launch_power_for(request)
         prepared_qot_inputs_by_path: list[_PreparedCandidateSummaryInputs | None] = []
@@ -445,7 +447,6 @@ class RequestAnalysisEngine:
 
             for path_index, path in enumerate(paths):
                 free_mask = common_free_masks[path_index, :]
-                common_analysis = path_free_runs[path_index]
                 required_slots_full[path_index, modulation_index] = required_slots
                 if required_slots > total_slots:
                     continue
@@ -455,16 +456,17 @@ class RequestAnalysisEngine:
                     continue
                 resource_valid_full[path_index, modulation_index, candidate_indices] = True
 
-                (
-                    fragmentation_damage_num_blocks_full[path_index, modulation_index, candidate_indices],
-                    fragmentation_damage_largest_block_full[path_index, modulation_index, candidate_indices],
-                ) = _fragmentation_damage_by_candidates(
-                    free_runs=common_analysis,
-                    candidate_indices=candidate_indices,
-                    service_num_slots=required_slots,
-                    total_slots=total_slots,
-                    block_count_scale=block_count_scale,
-                )
+                if not lean:
+                    (
+                        fragmentation_damage_num_blocks_full[path_index, modulation_index, candidate_indices],
+                        fragmentation_damage_largest_block_full[path_index, modulation_index, candidate_indices],
+                    ) = _fragmentation_damage_by_candidates(
+                        free_runs=path_free_runs[path_index],
+                        candidate_indices=candidate_indices,
+                        service_num_slots=required_slots,
+                        total_slots=total_slots,
+                        block_count_scale=block_count_scale,
+                    )
 
                 if self.config.mask_mode is MaskMode.RESOURCE_ONLY:
                     modulation_has_feasible_path = True
@@ -515,51 +517,23 @@ class RequestAnalysisEngine:
             max_feasible_modulation_index=max_feasible_modulation_index,
         )
         selected_positions = np.asarray(modulation_indices, dtype=np.intp)
-        resource_valid = _pad_array(
-            resource_valid_full[:, selected_positions, :],
-            (max_paths, selected_count, total_slots),
-            False,
-        )
-        qot_valid = _pad_array(
-            qot_valid_full[:, selected_positions, :],
-            (max_paths, selected_count, total_slots),
-            False,
-        )
-        osnr_margin = _pad_array(
-            osnr_margin_full[:, selected_positions, :],
-            (max_paths, selected_count, total_slots),
-            np.nan,
-        )
-        nli_share = _pad_array(
-            nli_share_full[:, selected_positions, :],
-            (max_paths, selected_count, total_slots),
-            np.nan,
-        )
-        worst_link_nli_share = _pad_array(
-            worst_link_nli_share_full[:, selected_positions, :],
-            (max_paths, selected_count, total_slots),
-            np.nan,
-        )
-        required_slots_selected = _pad_array(
-            required_slots_full[:, selected_positions],
-            (max_paths, selected_count),
-            0,
-        )
-        fragmentation_damage_num_blocks = _pad_array(
-            fragmentation_damage_num_blocks_full[:, selected_positions, :],
-            (max_paths, selected_count, total_slots),
-            0.0,
-        )
-        fragmentation_damage_largest_block = _pad_array(
-            fragmentation_damage_largest_block_full[:, selected_positions, :],
-            (max_paths, selected_count, total_slots),
-            0.0,
-        )
+        resource_valid = resource_valid_full[:, selected_positions, :]
+        qot_valid = qot_valid_full[:, selected_positions, :]
+        osnr_margin = osnr_margin_full[:, selected_positions, :]
+        nli_share = nli_share_full[:, selected_positions, :]
+        worst_link_nli_share = worst_link_nli_share_full[:, selected_positions, :]
+        required_slots_selected = required_slots_full[:, selected_positions]
+        if lean:
+            fragmentation_damage_num_blocks = np.zeros(selected_shape, dtype=np.float32)
+            fragmentation_damage_largest_block = np.zeros(selected_shape, dtype=np.float32)
+        else:
+            fragmentation_damage_num_blocks = fragmentation_damage_num_blocks_full[:, selected_positions, :]
+            fragmentation_damage_largest_block = fragmentation_damage_largest_block_full[:, selected_positions, :]
 
         path_route_cuts_norm_by_path = np.zeros(max_paths, dtype=np.float32)
         path_route_rss_by_path = np.zeros(max_paths, dtype=np.float32)
         for path_index, path in enumerate(paths):
-            if not path.link_ids:
+            if link_metrics is None or not path.link_ids:
                 continue
             route_cuts_sum = 0.0
             route_rss_sum = 0.0
@@ -587,6 +561,7 @@ class RequestAnalysisEngine:
 
         inspection: RequestAnalysisInspection | None = None
         if include_inspection:
+            assert link_metrics is not None  # inspection always builds the full analysis
             inspection = RequestAnalysisInspection(
                 common_free_masks=common_free_masks,
                 link_metrics=link_metrics,
@@ -616,13 +591,6 @@ class RequestAnalysisEngine:
             active_services_norm=active_services_norm,
             inspection=inspection,
         )
-
-
-def _pad_array(array: np.ndarray, target_shape: tuple[int, ...], fill_value: float | bool | int) -> np.ndarray:
-    result = np.full(target_shape, fill_value=fill_value, dtype=array.dtype)
-    slices = tuple(slice(0, size) for size in array.shape)
-    result[slices] = array
-    return result
 
 
 def _fragmentation_damage_by_candidates(
