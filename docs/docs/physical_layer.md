@@ -246,6 +246,10 @@ The request-analysis cache key holds `QoTEngine.topology_version`, so an
 analysis computed under an older physical layer is never returned, even when
 `QoTEngine.set_topology` is called directly.
 
+`examples/heuristics/network_aging.py` runs such a loop: every 250 requests it
+raises the loss and noise figure of every span and refreshes the established
+lightpaths, which are then disrupted when they fall below their threshold.
+
 ## Noise breakdown and environment hooks
 
 `QoTEngine.noise_breakdown(...)` and `service_noise_breakdown(state,
@@ -258,6 +262,18 @@ does not depend on it. NLI is clipped at 0 per span, the remainder being kept
 in `nli_correction_nsr`; the clip can only trigger with the default
 `"egn_xci"` correction, so with `"cfm2"` or `"gn"` the per-link sums are exact
 (up to rounding).
+
+`QoTEngine.summarize_candidate_at(state=, service_id=, path=, modulation=,
+service_slot_start=, service_num_slots=, launch_power=None)` returns the
+`QoTCandidateSummary` (OSNR, ASE, NLI, margin, threshold check, NLI shares) of
+one candidate in the current runtime state. `summarize_candidates_at(state=,
+service_id=, path=, candidates=, launch_power=None)` does the same for a list
+of `(modulation, service_slot_start, service_num_slots)` candidates of one
+route, preparing the route's interferers once; each result is bit-identical to
+the single call. It pays off when the candidates are evaluated anyway (on a
+loaded nobel-eu network, 15 µs instead of 26 µs per candidate for the 6
+formats of a route), not for a first fit that stops after the first feasible
+format.
 
 The route is either a `PathRecord` (`path=`) or any sequence of links in order
 (`link_ids=`, in either direction), e.g. a sub-path or the output of an

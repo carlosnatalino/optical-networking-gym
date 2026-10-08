@@ -18,6 +18,8 @@ What actually ships under `examples/`:
 - `heuristics/runtime_first_fit.py`, `heuristics/runtime_random.py`: policies
   driven by the runtime heuristic context.
 - `heuristics/load_sweep.py`: sweep episode blocking across loads and policies.
+- `heuristics/network_aging.py`: first-fit episode on nobel-eu whose spans
+  age every 250 requests (`env.update_spans`), with the disruptions it causes.
 - `heuristics/static_first_fit_trace.py`: replay a captured traffic table and
   write a step trace.
 - `load_sweep.py`, `static_first_fit_trace.py`: compatibility wrappers for the

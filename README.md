@@ -56,6 +56,13 @@ the limit. The opt-in `capture_traffic_table` and `capture_step_trace` buffers
 stay unbounded and grow with every arrival. See
 [docs/docs/get_started.md](docs/docs/get_started.md#9-memory-use-of-long-simulations).
 
+Loops that do not build the observation (e.g. a heuristic that reads the
+valid start slots and evaluates the QoT itself) can set
+`analysis_detail="resources"` with `enable_observation=False`: the request
+analysis then skips the fragmentation, link and route metrics, which cuts
+the step time by about 40% on nobel-eu with the same decisions. See
+[docs/docs/get_started.md](docs/docs/get_started.md#10-faster-loops-without-observation).
+
 ## Physical layer
 
 The QoT engine supports a heterogeneous physical layer (per-span fibre loss,
@@ -63,7 +70,8 @@ amplifier NF, lumped losses and gain ripple) and runtime updates of the span
 parameters during a simulation, e.g. to model network aging
 (`env.update_spans([SpanUpdate(link_id, span_index, attenuation_db_per_km=...,
 noise_figure_db=...)])`), keeping the traffic state. See
-[docs/docs/physical_layer.md](docs/docs/physical_layer.md).
+[docs/docs/physical_layer.md](docs/docs/physical_layer.md) and
+`examples/heuristics/network_aging.py`.
 
 ## Development
 

@@ -14,8 +14,9 @@
 7. [Building the Package and Running Tests](#building-the-package-and-running-tests)
 8. [Configuring the Development Environment](#configuring-the-development-environment)
 9. [Memory Use of Long Simulations](#memory-use-of-long-simulations)
-10. [Additional Resources](#additional-resources)
-11. [License and Credits](#license-and-credits)
+10. [Faster Loops Without Observation](#faster-loops-without-observation)
+11. [Additional Resources](#additional-resources)
+12. [License and Credits](#license-and-credits)
 
 ---
 
@@ -164,7 +165,35 @@ request, and `capture_step_trace` keeps every step with three full network
 snapshots. Their memory grows with every arrival, so enable them only for runs
 whose trace you will export.
 
-## 10. Additional Resources
+## 10. Faster Loops Without Observation
+
+Every request is analysed before the policy acts: candidate paths, formats,
+required slots and valid start slots, with their QoT, plus the fragmentation,
+link and route metrics the observation and the reward use. A loop that does
+not build the observation, e.g. a heuristic that reads
+`resource_valid_starts` and evaluates the QoT itself, does not need the latter.
+`ScenarioConfig.analysis_detail` selects how much is computed:
+
+| Value | Effect |
+|---|---|
+| `"full"` (default) | Every output of the analysis. |
+| `"resources"` | Paths, formats, required slots, resource-valid starts and, with `mask_mode=RESOURCE_AND_QOT`, the QoT arrays. The fragmentation damage, link metrics, route cuts/RSS and free-run statistics are zero-filled (same shapes and dtypes), so the fragmentation terms of `StepTransition` and of the reward are 0. |
+
+`"resources"` requires `enable_observation=False` (else `ValueError`). A
+build that asks for inspection (`Observation.build_snapshot`) stays full.
+Set it with `build_scenario(name, analysis_detail=...)`,
+`make_env(..., analysis_detail=...)` or directly in `ScenarioConfig`.
+Valid starts, slot counts, masks, decisions and GSNRs are the same in both
+modes. On nobel-eu (`jocn_benchmark`, `RESOURCE_ONLY`, no observation or mask,
+a heuristic that evaluates the QoT itself) a step takes 0.47 ms instead of
+0.82 ms.
+
+A heuristic that evaluates several formats or start slots on one path can
+pass them together to `QoTEngine.summarize_candidates_at` (see
+[physical_layer.md](physical_layer.md#noise-breakdown-and-environment-hooks)),
+which prepares the route's interferers once.
+
+## 11. Additional Resources
 
 After completing the installation steps, you're ready to develop and run simulations using **Optical Networking Gym**. For more information and resources, refer to:
 
@@ -172,7 +201,7 @@ After completing the installation steps, you're ready to develop and run simulat
 - **Issues and Support**: Use the [Issues](https://github.com/carlosnatalino/optical-networking-gym/issues) section on GitHub to report problems or request new features.
 
 
-## 11. License and Credits
+## 12. License and Credits
 
 **Optical Networking Gym** is licensed under the [MIT License](https://github.com/carlosnatalino/optical-networking-gym/blob/main/LICENSE). We extend our gratitude to all contributors and the open-source community for their support and contributions.
 

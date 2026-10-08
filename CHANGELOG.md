@@ -21,6 +21,10 @@
   the route's interferers. Each result is bit-identical to
   `summarize_candidate_at`. On a loaded nobel-eu network a candidate costs
   15 µs instead of 26 µs when the 6 formats of a route are evaluated together.
+- `examples/heuristics/network_aging.py`: an episode whose spans age at
+  regular intervals through `env.update_spans`, refreshing the established
+  lightpaths. Documentation of `analysis_detail` (`get_started.md`, README) and
+  of `summarize_candidate_at` / `summarize_candidates_at` (`physical_layer.md`).
 
 ### Changed
 
