@@ -24,7 +24,7 @@ if TYPE_CHECKING:
         SpanRecord,
         apply_inventory,
     )
-    from .topology import Link, PathRecord, Span, TopologyModel
+    from .topology import Link, PathRecord, Span, SpanUpdate, TopologyModel
     from .traffic_table_io import read_traffic_table_jsonl, write_traffic_table_jsonl
 
 _EXPORTS: dict[str, tuple[str, str]] = {
@@ -39,6 +39,7 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "Link": (".topology", "Link"),
     "PathRecord": (".topology", "PathRecord"),
     "Span": (".topology", "Span"),
+    "SpanUpdate": (".topology", "SpanUpdate"),
     "TopologyModel": (".topology", "TopologyModel"),
     "available_slots_for_path": (".allocation", "available_slots_for_path"),
     "build_first_fit_allocation": (".allocation", "build_first_fit_allocation"),
@@ -62,6 +63,7 @@ __all__ = [
     "Link",
     "PathRecord",
     "Span",
+    "SpanUpdate",
     "TopologyModel",
     "available_slots_for_path",
     "build_first_fit_allocation",

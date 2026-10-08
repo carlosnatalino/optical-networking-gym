@@ -22,6 +22,13 @@ from optical_networking_gym.defaults import (
 
 _SCENARIO_FIELDS = frozenset(field.name for field in fields(ScenarioConfig))
 _ALIASES = {"modulation_names": "modulations"}
+# Fields derived from the spectral grid in ScenarioConfig.__post_init__, with the
+# grid fields they depend on. ``replace`` would carry the resolved value of the
+# preset over, so they are re-derived when an override changes the grid.
+_GRID_DERIVED_FIELDS = {
+    "channel_width": frozenset({"frequency_slot_bandwidth"}),
+    "bandwidth": frozenset({"frequency_slot_bandwidth", "num_spectrum_resources"}),
+}
 _TRAFFIC_SOURCE_FIELDS = frozenset(
     {
         "bit_rates",
@@ -50,6 +57,9 @@ def build_scenario(name: str, **overrides: Any) -> ScenarioConfig:
     normalized = _normalize_overrides(overrides)
     if normalized and "traffic_source" not in normalized and normalized.keys() & _TRAFFIC_SOURCE_FIELDS:
         normalized["traffic_source"] = None
+    for derived, grid_fields in _GRID_DERIVED_FIELDS.items():
+        if derived not in normalized and normalized.keys() & grid_fields:
+            normalized[derived] = None
     if normalized:
         config = replace(config, **normalized)
     return config
@@ -168,7 +178,6 @@ def _nobel_eu_baseline() -> ScenarioConfig:
         load=DEFAULT_LOAD,
         mean_holding_time=DEFAULT_MEAN_HOLDING_TIME,
         launch_power_dbm=DEFAULT_LAUNCH_POWER_DBM,
-        bandwidth=4e12,
         modulations=get_modulations("BPSK,QPSK,8QAM,16QAM,32QAM,64QAM"),
         modulations_to_consider=DEFAULT_MODULATIONS_TO_CONSIDER,
         seed=DEFAULT_SEED,
@@ -232,7 +241,6 @@ def _jocn_benchmark() -> ScenarioConfig:
         frequency_slot_bandwidth=12.5e9,
         launch_power_dbm=-4.0,
         margin=0.0,
-        bandwidth=4e12,
         modulations=_jocn_modulations(),
         modulations_to_consider=6,
         seed=DEFAULT_SEED,

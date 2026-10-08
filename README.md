@@ -45,6 +45,34 @@ python examples/quickstart/basic_first_fit.py
 See `examples/INVENTORY.md` for the full list of examples, and `DEVELOPMENT.md`
 for the development workflow (build, tests, lint, type check).
 
+## Memory use
+
+The request-analysis cache is bounded by `ScenarioConfig.request_buffer_limit`
+(default `8` analyses, least recently used evicted first; `-1` is unlimited, as
+in 0.3.0 and earlier, and `0` disables it). An analysis takes about 0.2–0.3 MB
+on nobel-eu with 320 slots and the cache is never hit in a plain step loop, so
+an unbounded cache grew by that much at every arrival. Results do not depend on
+the limit. The opt-in `capture_traffic_table` and `capture_step_trace` buffers
+stay unbounded and grow with every arrival. See
+[docs/docs/get_started.md](docs/docs/get_started.md#9-memory-use-of-long-simulations).
+
+Loops that do not build the observation (e.g. a heuristic that reads the
+valid start slots and evaluates the QoT itself) can set
+`analysis_detail="resources"` with `enable_observation=False`: the request
+analysis then skips the fragmentation, link and route metrics, which cuts
+the step time by about 40% on nobel-eu with the same decisions. See
+[docs/docs/get_started.md](docs/docs/get_started.md#10-faster-loops-without-observation).
+
+## Physical layer
+
+The QoT engine supports a heterogeneous physical layer (per-span fibre loss,
+amplifier NF, lumped losses and gain ripple) and runtime updates of the span
+parameters during a simulation, e.g. to model network aging
+(`env.update_spans([SpanUpdate(link_id, span_index, attenuation_db_per_km=...,
+noise_figure_db=...)])`), keeping the traffic state. See
+[docs/docs/physical_layer.md](docs/docs/physical_layer.md) and
+`examples/heuristics/network_aging.py`.
+
 ## Development
 
 See [DEVELOPMENT.md](DEVELOPMENT.md).

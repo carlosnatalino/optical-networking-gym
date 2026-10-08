@@ -40,6 +40,8 @@ class TrafficModel:
             config.launch_power_seed if config.launch_power_seed is not None else config.seed
         )
         self._table_id = self._build_table_id()
+        # Every request of the run when ``capture_table`` is on. This is an
+        # export, so it is never truncated: its memory grows with every arrival.
         self._captured_records: list[TrafficRecord] = []
 
         self._dynamic_source: _DynamicTrafficSource | None = None
@@ -57,6 +59,11 @@ class TrafficModel:
         return self._next_static_request()
 
     def export_table(self) -> tuple[TrafficTable, tuple[TrafficRecord, ...]]:
+        """Table of every request generated since the model was built.
+
+        Requires ``capture_table``. The captured records are kept in memory
+        and never truncated, so their memory grows with every arrival.
+        """
         if not self.capture_table:
             raise RuntimeError("capture_table must be enabled to export a traffic table")
         table = TrafficTable(
