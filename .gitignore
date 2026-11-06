@@ -30,3 +30,5 @@ examples/results/*.jsonl
 perf/
 .idea/
 .vscode/
+
+team/results/
