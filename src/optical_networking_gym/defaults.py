@@ -34,12 +34,12 @@ def set_topology_dir(path: str | Path) -> None:
 
 def resolve_topology(name: str) -> Path:
     search_dir = _TOPOLOGY_DIR if _TOPOLOGY_DIR is not None else BUILTIN_TOPOLOGY_DIR
-    for suffix in (".xml", ".txt"):
+    for suffix in (".xml", ".txt", ".json"):
         candidate = search_dir / f"{name}{suffix}"
         if candidate.exists():
             return candidate
     raise FileNotFoundError(
-        f"Topology {name!r} not found in {search_dir}. Tried: {name}.xml, {name}.txt"
+        f"Topology {name!r} not found in {search_dir}. Tried: {name}.xml, {name}.txt, {name}.json"
     )
 
 
