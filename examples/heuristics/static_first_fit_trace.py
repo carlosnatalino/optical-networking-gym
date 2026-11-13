@@ -78,7 +78,6 @@ def build_env(
         qot_constraint="ASE+NLI",
         measure_disruptions=False,
         margin=0.0,
-        bandwidth=num_spectrum_resources * 12.5e9,
         capture_step_trace=True,
     )
     return OpticalEnv(

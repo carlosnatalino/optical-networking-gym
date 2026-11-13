@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 import numpy as np
@@ -7,7 +8,7 @@ import numpy as np
 import gymnasium as gym
 
 from optical_networking_gym.contracts import StepTransition
-from optical_networking_gym.network.topology import TopologyModel
+from optical_networking_gym.network.topology import SpanUpdate, TopologyModel
 from optical_networking_gym.config.scenario import ScenarioConfig
 from optical_networking_gym.runtime.request_analysis import RequestAnalysis
 from optical_networking_gym.runtime.simulator import Simulator
@@ -103,6 +104,16 @@ class OpticalEnv(gym.Env):
         the arrival of the request.
         """
         return None
+
+    def update_spans(
+        self,
+        updates: Iterable[SpanUpdate],
+        *,
+        refresh_active_services: bool = False,
+    ) -> TopologyModel:
+        """Change span parameters during the simulation (see
+        :meth:`Simulator.update_spans <optical_networking_gym.runtime.simulator.Simulator.update_spans>`)."""
+        return self.simulator.update_spans(updates, refresh_active_services=refresh_active_services)
 
     def action_masks(self) -> np.ndarray | None:
         return self.simulator.action_masks()

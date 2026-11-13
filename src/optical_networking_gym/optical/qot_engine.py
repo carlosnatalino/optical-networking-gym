@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 import math
 
@@ -217,34 +217,120 @@ class QoTEngine:
             np.concatenate(([0.0], np.cumsum(lengths[:-1]))) for lengths in self._link_span_lengths_km
         )
         self._link_length_km = tuple(float(np.sum(lengths)) for lengths in self._link_span_lengths_km)
-        self._link_span_attenuation_normalized = tuple(
-            np.array([span.attenuation_normalized for span in link.spans], dtype=np.float64)
-            for link in topology.links
-        )
-        self._link_span_noise_figure_normalized = tuple(
-            np.array([span.noise_figure_normalized for span in link.spans], dtype=np.float64)
-            for link in topology.links
-        )
-        self._link_span_input_loss = tuple(
-            np.array([span.input_loss_linear for span in link.spans], dtype=np.float64)
-            for link in topology.links
-        )
-        self._link_span_output_loss = tuple(
-            np.array([span.output_loss_linear for span in link.spans], dtype=np.float64)
-            for link in topology.links
-        )
         self._slot_center_frequencies = config.frequency_start + config.frequency_slot_bandwidth * (
             np.arange(config.num_spectrum_resources, dtype=np.float64) + 0.5
         )
-        self._link_span_power_offset_db = tuple(
-            self._span_power_offsets(link.spans) for link in topology.links
-        )
+        # Per-link span parameters, indexed by link id. Lists, so that
+        # ``set_topology`` can replace the entries of the links that change.
+        self._link_span_attenuation_normalized: list[np.ndarray] = []
+        self._link_span_noise_figure_normalized: list[np.ndarray] = []
+        self._link_span_input_loss: list[np.ndarray] = []
+        self._link_span_output_loss: list[np.ndarray] = []
+        self._link_span_power_offset_db: list[np.ndarray] = []
+        for link in topology.links:
+            self._append_link_span_arrays(link.spans)
         self._any_power_offsets = any(offsets.shape[1] > 0 for offsets in self._link_span_power_offset_db)
+        # Incremented by every ``set_topology`` call, so that results cached
+        # outside the engine (request analyses) can tell physical layers apart.
+        self.topology_version = 0
         self._link_interference_cache: dict[int, _LinkInterferenceCache] = {}
         # Keyed by the link sequence, not ``PathRecord.id``: a path's QoT inputs
         # depend only on its links, and ids are not unique outside the
         # topology's k-shortest paths (sub-paths, external planners).
         self._path_summary_static_cache: dict[tuple[int, ...], _PathSummaryStaticInputs] = {}
+        # Keys of the cached routes through each link, so that ``set_topology``
+        # evicts only the routes it affects. May hold already-evicted keys.
+        self._cached_routes_by_link: list[set[tuple[int, ...]]] = [set() for _ in topology.links]
+
+    def _link_span_arrays(
+        self, spans: tuple[Span, ...]
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Attenuation, NF, input/output loss (linear) and gain-ripple power
+        offsets of the spans of one link, as the kernel consumes them."""
+        return (
+            np.array([span.attenuation_normalized for span in spans], dtype=np.float64),
+            np.array([span.noise_figure_normalized for span in spans], dtype=np.float64),
+            np.array([span.input_loss_linear for span in spans], dtype=np.float64),
+            np.array([span.output_loss_linear for span in spans], dtype=np.float64),
+            self._span_power_offsets(spans),
+        )
+
+    def _append_link_span_arrays(self, spans: tuple[Span, ...]) -> None:
+        attenuation, noise_figure, input_loss, output_loss, power_offset_db = self._link_span_arrays(spans)
+        self._link_span_attenuation_normalized.append(attenuation)
+        self._link_span_noise_figure_normalized.append(noise_figure)
+        self._link_span_input_loss.append(input_loss)
+        self._link_span_output_loss.append(output_loss)
+        self._link_span_power_offset_db.append(power_offset_db)
+
+    def set_topology(
+        self,
+        topology: TopologyModel,
+        *,
+        changed_link_ids: Iterable[int] | None = None,
+    ) -> None:
+        """Adopt a topology that differs from the current one only in span
+        parameters (fibre loss, amplifier NF, lumped losses, gain ripple), e.g.
+        one returned by ``TopologyModel.with_span_updates``.
+
+        Only the links in ``changed_link_ids`` (all links when ``None``) are
+        re-read, and only the cached routes that use one of them are
+        invalidated, so the cost is proportional to the change. The engine
+        then computes exactly what a new ``QoTEngine`` built on ``topology``
+        would. The per-link interferer cache is kept: it depends only on the
+        services and the span lengths.
+
+        Raises:
+            ValueError: If the link ids, span counts or span lengths differ
+                from the current topology's, or a changed link id is unknown.
+        """
+        if len(topology.links) != len(self.topology.links):
+            raise ValueError(
+                f"topology has {len(topology.links)} links, expected {len(self.topology.links)}"
+            )
+        for link, current, lengths in zip(topology.links, self.topology.links, self._link_span_lengths_km):
+            if link is current:  # shared by ``with_span_updates``
+                continue
+            if link.id != current.id:
+                raise ValueError(f"link id {link.id} does not match the current topology ({current.id})")
+            if len(link.spans) != lengths.shape[0] or any(
+                span.length_km != length for span, length in zip(link.spans, lengths.tolist())
+            ):
+                raise ValueError(f"link {link.id} has different span lengths than the current topology")
+        if changed_link_ids is None:
+            changed = set(range(len(topology.links)))
+        else:
+            changed = {int(link_id) for link_id in changed_link_ids}
+            for link_id in changed:
+                if not 0 <= link_id < len(topology.links):
+                    raise ValueError(f"unknown link id {link_id}")
+
+        self.topology = topology
+        self.topology_version += 1
+        if not changed:
+            return
+        for link_id in changed:
+            (
+                self._link_span_attenuation_normalized[link_id],
+                self._link_span_noise_figure_normalized[link_id],
+                self._link_span_input_loss[link_id],
+                self._link_span_output_loss[link_id],
+                self._link_span_power_offset_db[link_id],
+            ) = self._link_span_arrays(topology.links[link_id].spans)
+        any_power_offsets = any(offsets.shape[1] > 0 for offsets in self._link_span_power_offset_db)
+        # Toggling the gain-ripple offsets changes the layout of every route.
+        if any_power_offsets != self._any_power_offsets or len(changed) == len(topology.links):
+            self._any_power_offsets = any_power_offsets
+            self._path_summary_static_cache.clear()
+            for routes in self._cached_routes_by_link:
+                routes.clear()
+            return
+        cache = self._path_summary_static_cache
+        for link_id in changed:
+            routes = self._cached_routes_by_link[link_id]
+            for key in routes:
+                cache.pop(key, None)
+            routes.clear()
 
     def _span_power_offsets(self, spans: tuple[Span, ...]) -> np.ndarray:
         """Channel-power offset (dB) at each span input due to EDFA gain ripple.
@@ -511,6 +597,54 @@ class QoTEngine:
             worst_link_nli_share=metrics.worst_link_nli_share,
         )
 
+    def summarize_candidates_at(
+        self,
+        *,
+        state: RuntimeState,
+        service_id: int,
+        path: PathRecord,
+        candidates: Sequence[tuple[Modulation, int, int]],
+        launch_power: float | None = None,
+    ) -> list[QoTCandidateSummary]:
+        """``summarize_candidate_at`` for several candidates of one route.
+
+        ``candidates`` holds ``(modulation, service_slot_start,
+        service_num_slots)`` tuples. The route's interferers are prepared once
+        for all of them, and each result is bit-identical to the
+        corresponding ``summarize_candidate_at`` call.
+        """
+        prepared = self._prepare_candidate_summary_inputs(state, path)
+        power = self._launch_power if launch_power is None else launch_power
+        summaries: list[QoTCandidateSummary] = []
+        for modulation, service_slot_start, service_num_slots in candidates:
+            bandwidth = self.config.frequency_slot_bandwidth * service_num_slots
+            center_frequency = (
+                self.config.frequency_start
+                + self.config.frequency_slot_bandwidth * service_slot_start
+                + self.config.frequency_slot_bandwidth * (service_num_slots / 2.0)
+            )
+            metrics = self._metrics_from_prepared(
+                prepared,
+                service_id=service_id,
+                center_frequency=center_frequency,
+                bandwidth=bandwidth,
+                launch_power=power,
+                modulation=modulation,
+            )
+            threshold = modulation.minimum_osnr + self.config.margin
+            summaries.append(
+                QoTCandidateSummary(
+                    osnr=metrics.osnr,
+                    ase=metrics.ase,
+                    nli=metrics.nli,
+                    meets_threshold=metrics.osnr >= threshold,
+                    osnr_margin=metrics.osnr - threshold,
+                    nli_share=metrics.total_nli_share,
+                    worst_link_nli_share=metrics.worst_link_nli_share,
+                )
+            )
+        return summaries
+
     def summarize_candidate_starts(
         self,
         *,
@@ -732,6 +866,8 @@ class QoTEngine:
             link_start_km=link_start_km,
         )
         self._path_summary_static_cache[path.link_ids] = static_inputs
+        for link_id in link_ids:
+            self._cached_routes_by_link[link_id].add(path.link_ids)
         return static_inputs
 
     def recompute_service(self, state: RuntimeState, service_id: int) -> ServiceQoTUpdate:
@@ -791,7 +927,25 @@ class QoTEngine:
         state: RuntimeState,
         modulation: Modulation | None,
     ) -> _MetricsSummary:
-        prepared = self._prepare_candidate_summary_inputs(state, path)
+        return self._metrics_from_prepared(
+            self._prepare_candidate_summary_inputs(state, path),
+            service_id=service_id,
+            center_frequency=center_frequency,
+            bandwidth=bandwidth,
+            launch_power=launch_power,
+            modulation=modulation,
+        )
+
+    def _metrics_from_prepared(
+        self,
+        prepared: _PreparedCandidateSummaryInputs,
+        *,
+        service_id: int,
+        center_frequency: float,
+        bandwidth: float,
+        launch_power: float,
+        modulation: Modulation | None,
+    ) -> _MetricsSummary:
         _, _, _, acc_gsnr, acc_ase, acc_nli, worst_link_nli_share = path_noise(
             prepared.span_offsets,
             prepared.span_lengths,

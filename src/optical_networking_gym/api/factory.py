@@ -55,6 +55,8 @@ def make_env(
     include_mask_in_info: bool = True,
     capture_traffic_table: bool = False,
     capture_step_trace: bool = False,
+    request_buffer_limit: int | object = _UNSET,
+    analysis_detail: str | object = _UNSET,
 ) -> OpticalEnv:
     """Build an :class:`OpticalEnv` from a scenario preset, complete config, or flat facade.
 
@@ -98,7 +100,14 @@ def make_env(
     Instrumentation:
         `capture_traffic_table`, `capture_step_trace`: Optional capture paths
         for replay/debug artifacts. They stay disabled by default because they
-        add runtime and allocation overhead.
+        add runtime and allocation overhead. Their memory grows with every
+        arrival (they are exports and are never truncated).
+        `request_buffer_limit`: Number of request analyses memoized by the
+        request-analysis engine (least recently used are evicted); `-1` keeps
+        every analysis, `0` disables the cache. Results do not depend on it.
+        `analysis_detail`: `"full"` (default) or `"resources"`, which skips the
+        fragmentation and link metrics of every request analysis (requires
+        `enable_observation=False`; the fragmentation terms are then 0).
     """
     if config is not None or isinstance(scenario, ScenarioConfig):
         if config is not None and scenario is not None:
@@ -140,6 +149,8 @@ def make_env(
         _add_if_set(scenario_overrides, "launch_power_dbm", launch_power_dbm)
         _add_if_set(scenario_overrides, "margin", margin)
         _add_if_set(scenario_overrides, "bandwidth", bandwidth)
+        _add_if_set(scenario_overrides, "request_buffer_limit", request_buffer_limit)
+        _add_if_set(scenario_overrides, "analysis_detail", analysis_detail)
         resolved_config = build_scenario(scenario, **scenario_overrides)
     else:
         if topology_name is None:
@@ -173,7 +184,7 @@ def make_env(
             qot_constraint=qot_constraint,
             measure_disruptions=measure_disruptions,
             drop_on_disruption=drop_on_disruption,
-            channel_width=_value_or_default(channel_width, 12.5),
+            channel_width=_value_or_default(channel_width, None),
             frequency_start=_value_or_default(frequency_start, (3e8 / 1565e-9)),
             frequency_slot_bandwidth=_value_or_default(frequency_slot_bandwidth, 12.5e9),
             launch_power_dbm=_value_or_default(launch_power_dbm, 0.0),
@@ -186,6 +197,8 @@ def make_env(
             include_mask_in_info=include_mask_in_info,
             capture_traffic_table=capture_traffic_table,
             capture_step_trace=capture_step_trace,
+            request_buffer_limit=_value_or_default(request_buffer_limit, 8),
+            analysis_detail=_value_or_default(analysis_detail, "full"),
             seed=_value_or_default(seed, 42),
         )
 

@@ -57,7 +57,7 @@ from .network.allocation import (
     occupied_slot_range,
     path_is_free,
 )
-from .network.topology import Link, PathRecord, Span, TopologyModel
+from .network.topology import Link, PathRecord, Span, SpanUpdate, TopologyModel
 from .network.traffic_table_io import read_traffic_table_jsonl, write_traffic_table_jsonl
 from .optical.first_fit import (
     select_first_fit_action_from_env,
@@ -106,6 +106,7 @@ __all__ = [
     "ServiceRequest",
     "Simulator",
     "Span",
+    "SpanUpdate",
     "Statistics",
     "StatisticsSnapshot",
     "Status",

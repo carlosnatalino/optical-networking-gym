@@ -166,7 +166,6 @@ def build_nobel_eu_graph_load_scenario(
         frequency_slot_bandwidth=12.5e9,
         launch_power_dbm=launch_power_dbm,
         margin=margin,
-        bandwidth=4e12,
         modulations=get_modulations(DEFAULT_MODULATION_NAMES),
         modulations_to_consider=modulations_to_consider,
         seed=seed,

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
+import numbers
 from pathlib import Path
 
 from collections.abc import Sequence
@@ -14,6 +16,7 @@ from optical_networking_gym.contracts.modulation import Modulation
 _VALID_QOT_CONSTRAINTS = frozenset({"ASE+NLI", "DIST"})
 _VALID_INTERFERER_PSD_MODES = frozenset({"cut", "actual"})
 _VALID_NLI_MODULATION_CORRECTIONS = frozenset({"egn_xci", "cfm2", "gn"})
+_VALID_ANALYSIS_DETAILS = frozenset({"full", "resources"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,7 +43,13 @@ class ScenarioConfig:
     qot_constraint: str = "ASE+NLI"
     measure_disruptions: bool = False
     drop_on_disruption: bool = False
-    channel_width: float = 12.5
+    # Width of one frequency slot in GHz. It is derived from
+    # ``frequency_slot_bandwidth`` (the single source of truth, in Hz) when
+    # ``None``; when given, it must equal ``frequency_slot_bandwidth / 1e9``.
+    # It sets the slots a request needs, ceil(bit_rate / (spectral_efficiency
+    # x channel_width)), while the slot grid and the QoT use
+    # ``frequency_slot_bandwidth``.
+    channel_width: float | None = None
     frequency_start: float = (3e8 / 1565e-9)
     frequency_slot_bandwidth: float = 12.5e9
     launch_power_dbm: float = 0.0
@@ -75,14 +84,30 @@ class ScenarioConfig:
     roadm_express_osnr_db: float | None = None
     transceiver_osnr_db: float | None = None
     margin: float = 0.0
+    # Total spectrum (Hz): ``num_spectrum_resources x frequency_slot_bandwidth``
+    # when ``None``; when given, it must equal that product.
     bandwidth: float | None = None
     modulations: tuple[Modulation, ...] = ()
     modulations_to_consider: int | None = None
     enable_observation: bool = True
     enable_action_mask: bool = True
     include_mask_in_info: bool = True
+    # What the RequestAnalysisEngine computes for each request. "full" computes
+    # everything. "resources" computes only the paths, formats, required slots
+    # and resource-valid starts, plus the QoT arrays when the mask mode is
+    # RESOURCE_AND_QOT with a GSNR constraint; the fragmentation damage, link
+    # metrics, route cuts/RSS and free-run statistics are zero-filled. It
+    # requires enable_observation=False, and the fragmentation terms of
+    # StepTransition (fragmentation_*) and of the reward are then 0. A build
+    # that asks for inspection (Observation.build_snapshot) is always full.
+    analysis_detail: str = "full"
     capture_traffic_table: bool = False
     capture_step_trace: bool = False
+    # Maximum number of request analyses kept in memory by the RequestAnalysisEngine
+    # (least recently used are evicted first). -1 keeps every analysis (the behaviour of
+    # 0.3.0 and earlier); 0 disables the cache. The cache only memoizes: results do not
+    # depend on this value.
+    request_buffer_limit: int = 8
     seed: int | None = None
 
     def __post_init__(self) -> None:
@@ -102,10 +127,15 @@ class ScenarioConfig:
             raise ValueError("default_attenuation_db_per_km must be positive")
         if self.default_noise_figure_db <= 0:
             raise ValueError("default_noise_figure_db must be positive")
-        if self.channel_width <= 0:
-            raise ValueError("channel_width must be positive")
         if self.frequency_slot_bandwidth <= 0:
             raise ValueError("frequency_slot_bandwidth must be positive")
+        if self.channel_width is None:
+            object.__setattr__(self, "channel_width", self.frequency_slot_bandwidth / 1e9)
+        elif not math.isclose(self.channel_width * 1e9, self.frequency_slot_bandwidth, rel_tol=1e-9):
+            raise ValueError(
+                "channel_width (GHz) must equal frequency_slot_bandwidth (Hz) / 1e9; "
+                "set only frequency_slot_bandwidth"
+            )
         if self.nli_interferer_psd not in _VALID_INTERFERER_PSD_MODES:
             raise ValueError(
                 "nli_interferer_psd must be one of: " + ", ".join(sorted(_VALID_INTERFERER_PSD_MODES))
@@ -133,18 +163,24 @@ class ScenarioConfig:
             value = getattr(self, name)
             if value is not None and not np.isfinite(value):
                 raise ValueError(f"{name} must be finite when provided")
+        if self.analysis_detail not in _VALID_ANALYSIS_DETAILS:
+            raise ValueError(
+                "analysis_detail must be one of: " + ", ".join(sorted(_VALID_ANALYSIS_DETAILS))
+            )
+        if self.analysis_detail == "resources" and self.enable_observation:
+            raise ValueError('analysis_detail="resources" requires enable_observation=False')
         if self.qot_constraint not in _VALID_QOT_CONSTRAINTS:
             raise ValueError(
                 "qot_constraint must be one of: " + ", ".join(sorted(_VALID_QOT_CONSTRAINTS))
             )
+        grid_bandwidth = self.num_spectrum_resources * self.frequency_slot_bandwidth
         if self.bandwidth is None:
-            object.__setattr__(
-                self,
-                "bandwidth",
-                self.num_spectrum_resources * self.frequency_slot_bandwidth,
+            object.__setattr__(self, "bandwidth", grid_bandwidth)
+        elif not math.isclose(self.bandwidth, grid_bandwidth, rel_tol=1e-9):
+            raise ValueError(
+                "bandwidth (Hz) must equal num_spectrum_resources x frequency_slot_bandwidth; "
+                "leave it unset to derive it"
             )
-        elif self.bandwidth <= 0:
-            raise ValueError("bandwidth must be positive")
         if self.modulations_to_consider is None:
             object.__setattr__(self, "modulations_to_consider", len(self.modulations))
         elif self.modulations_to_consider < 0:
@@ -178,8 +214,22 @@ class ScenarioConfig:
             object.__setattr__(self, "traffic_source", self._build_default_traffic_source())
         if self.seed is not None and self.seed < 0:
             raise ValueError("seed must be non-negative")
+        if (
+            not isinstance(self.request_buffer_limit, numbers.Integral)
+            or isinstance(self.request_buffer_limit, bool)
+            or self.request_buffer_limit < -1
+        ):
+            raise ValueError("request_buffer_limit must be -1 (unlimited) or a non-negative integer")
+        object.__setattr__(self, "request_buffer_limit", int(self.request_buffer_limit))
         if self.traffic_mode is TrafficMode.STATIC and self.traffic_source is None:
             raise ValueError("traffic_source is required when traffic_mode is static")
+
+    @property
+    def resolved_channel_width(self) -> float:
+        """``channel_width`` after ``__post_init__`` resolution (never ``None``)."""
+        value = self.channel_width
+        assert value is not None  # resolved in __post_init__
+        return value
 
     @property
     def resolved_modulations_to_consider(self) -> int:
@@ -259,4 +309,5 @@ class ScenarioConfig:
             self.enable_observation,
             self.enable_action_mask,
             self.include_mask_in_info,
+            self.analysis_detail,
         )
