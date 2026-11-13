@@ -1,298 +1,299 @@
 # Topology
 
-## Overview
+A `TopologyModel` is the static description of the network: its nodes, the
+undirected fibre links between them with their spans, and the K-shortest
+paths of every node pair. It is immutable; the simulator and the QoT engine
+read it, and changes to the physical layer (for example aging) produce a new
+model.
 
-**Optical Networking Gym** is an open-source toolkit designed for benchmarking resource assignment problems in optical networks. It provides a simulation environment where Reinforcement Learning (RL) agents can optimize routing and spectrum assignment (RSA) strategies efficiently.
+```python
+from optical_networking_gym import TopologyModel, resolve_topology
+
+topology = TopologyModel.from_file(resolve_topology("nobel-eu"), k_paths=5)
+print(topology.node_count, topology.link_count, topology.path_count)  # 28 41 1890
+```
+
+The classes live in `optical_networking_gym.network.topology` and are also
+exported by `optical_networking_gym.network` and the top-level package.
 
 ## Table of Contents
 
-1. [Classes](#classes)
-    - [Span](#span)
+1. [Loading a topology](#loading-a-topology)
+2. [File formats](#file-formats)
+    - [SNDlib (`.xml`)](#sndlib-xml)
+    - [Plain text (`.txt`)](#plain-text-txt)
+    - [T-API topology context (`.json`)](#t-api-topology-context-json)
+3. [Built-in topologies](#built-in-topologies)
+4. [Spans](#spans)
+5. [Paths](#paths)
+6. [Data classes](#data-classes)
+    - [TopologyModel](#topologymodel)
     - [Link](#link)
-    - [Modulation](#modulation)
-    - [Path](#path)
-2. [Utility Functions](#utility-functions)
-    - [get_k_shortest_paths](#get_k_shortest_paths)
-    - [get_path_weight](#get_path_weight)
-    - [get_best_modulation_format_by_length](#get_best_modulation_format_by_length)
-    - [calculate_geographical_distance](#calculate_geographical_distance)
-    - [read_sndlib_topology](#read_sndlib_topology)
-    - [read_txt_file](#read_txt_file)
-    - [get_topology](#get_topology)
-    - [get_best_modulation_format](#get_best_modulation_format)
-3. [Dependencies](#dependencies)
-4. [License and Credits](#license-and-credits)
+    - [Span](#span)
+    - [PathRecord](#pathrecord)
+    - [SpanUpdate](#spanupdate)
 
 ---
 
-## Classes
+## Loading a topology
 
-### Span
-
-```cython
-cdef class Span:
-    cdef public double length
-    cdef public double attenuation_db_km
-    cdef public double attenuation_normalized
-    cdef public double noise_figure_db
-    cdef public double noise_figure_normalized
-
-    def __init__(self, double length, double attenuation, double noise_figure):
-        ...
+```python
+TopologyModel.from_file(
+    file_path: str | Path,
+    *,
+    topology_id: str | None = None,       # defaults to the file stem
+    k_paths: int = 5,
+    max_span_length_km: float = 100.0,
+    default_attenuation_db_per_km: float = 0.2,
+    default_noise_figure_db: float = 4.5,
+) -> TopologyModel
 ```
 
-- **Description:** Represents a single span within a network link.
-- **Attributes:**
-  - `length`: Length of the span (km).
-  - `attenuation_db_km`: Attenuation (dB/km).
-  - `attenuation_normalized`: Normalized attenuation (1/m).
-  - `noise_figure_db`: Noise figure (dB).
-  - `noise_figure_normalized`: Normalized noise figure (linear scale).
-- **Methods:**
-  - `set_attenuation(attenuation)`: Update attenuation.
-  - `set_noise_figure(noise_figure)`: Update noise figure.
-  - `__repr__()`: String representation.
+The format is chosen by the file extension (see [File formats](#file-formats));
+any other extension raises `ValueError`, and a missing file raises
+`FileNotFoundError`. None of the formats describe the physical layer, so every
+span gets `default_attenuation_db_per_km` and `default_noise_figure_db`. A
+heterogeneous physical layer (per-span loss, NF, lumped losses, gain ripple)
+is applied afterwards with `apply_inventory`; see
+[Per-span inventory](physical_layer.md#per-span-inventory).
+
+To load a topology by name, `resolve_topology(name)` looks for `<name>.xml`,
+`<name>.txt` and `<name>.json`, in that order. It searches the built-in
+directory (`optical_networking_gym.defaults.BUILTIN_TOPOLOGY_DIR`), or the
+directory set with `set_topology_dir(path)`. It raises `FileNotFoundError` if
+none of them exists.
+
+`make_env` and the scenario presets do this for you. The topology fields of
+`ScenarioConfig` (`topology_id`, `topology_dir`, `k_paths`,
+`max_span_length_km`, `default_attenuation_db_per_km`,
+`default_noise_figure_db`) are passed to `resolve_topology` and `from_file`:
+
+```python
+from optical_networking_gym import make_env
+
+env = make_env(topology_name="nsfnet_chen", k_paths=3)
+
+# Your own file, through a preset:
+env = make_env(
+    scenario="nobel_eu_baseline",
+    overrides={
+        "topology_id": "coronet_tapi_topology_context",
+        "topology_dir": "examples/topologies",
+    },
+)
+```
+
+`examples/create_topology.py` builds a model from a file or a built-in name
+and pickles it:
+
+```bash
+python examples/create_topology.py --topology nsfnet_chen -k 5
+python examples/create_topology.py \
+    --topology examples/topologies/coronet_tapi_topology_context.json -k 5 -m 80
+```
+
+Its options are `-k/--k_paths`, `-t/--topology`, `-m/--max_span_length` (km,
+default 80), `-a/--attenuation` (dB/km), `-n/--noise_figure` (dB) and
+`-o/--output-dir`.
 
 ---
+
+## File formats
+
+All three formats are read into the same undirected graph: one node per site
+and at most one link per node pair, with a length in km. Link ids follow the
+order of the links in the file, starting at 0.
+
+### SNDlib (`.xml`)
+
+An [SNDlib](http://sndlib.zib.de) network in XML.
+
+- **Nodes:** the `<node>` elements, named by their `id` attribute.
+- **Links:** the `<link>` elements. A link between a pair that already has one
+  (in either direction) is skipped.
+- **Length:** computed from the node coordinates and rounded to 3 decimals.
+  With `coordinatesType="geographical"`, it is the great-circle distance
+  (haversine, Earth radius 6373 km) between the `(x, y)` = (longitude,
+  latitude) positions. Otherwise it is the Euclidean distance.
+
+### Plain text (`.txt`)
+
+```text
+# Lines starting with '#' are ignored.
+4
+1 2 150
+2 3 450
+3 4 350
+4 1 250
+```
+
+- The first line is the number of nodes `N`. The nodes are named `"1"` to
+  `"N"`.
+- An optional second line with a single number (the link count, as in
+  `nsfnet_chen.txt`) is skipped.
+- Every other non-empty line is `source target length_km`, separated by
+  single spaces. Extra columns are ignored.
+
+### T-API topology context (`.json`)
+
+A ONF T-API topology context (`tapi-topology:topology-context`), optionally
+wrapped in `tapi-common:context`, as exported by
+[TwinLight](https://github.com/carlosnatalino/TwinLight). Only the first
+topology of the context is read.
+
+- **Nodes:** one per ROADM, i.e. the nodes at the end of a fibre link, named
+  by their `node-name` without the `roadm ` prefix (`roadm Abilene` becomes
+  `Abilene`). Transceiver nodes are ignored.
+- **Links:** the links with a positive `propagation-delay` latency
+  characteristic. The two unidirectional links between a pair of ROADMs
+  become one undirected link. Links without a delay (such as those attaching
+  transceivers to their ROADM) are ignored.
+- **Length:** `total-size` of the propagation delay (ns) times the speed of
+  light in fibre, c / 1.47 (`TAPI_FIBER_GROUP_INDEX`). If the two directions
+  differ, their mean is used. Rounded to 3 decimals.
+- **Errors:** `ValueError` if the document has no topology context or no
+  topology, if two ROADMs have the same name, or if a link references an
+  unknown node.
+
+`examples/topologies/coronet_tapi_topology_context.json` is CORONET CONUS in
+this format (75 ROADMs, 99 links).
+
+---
+
+## Built-in topologies
+
+These are found by `resolve_topology` when no topology directory is set:
+
+| Name | Format | Nodes | Links |
+|---|---|---|---|
+| `germany50` | SNDlib | 50 | 88 |
+| `janos-us` | SNDlib | 26 | 42 |
+| `nobel-eu` | SNDlib | 28 | 41 |
+| `nobel-us` | SNDlib | 14 | 21 |
+| `nsfnet_chen` | text | 14 | 22 |
+| `ring_4` | text | 4 | 4 |
+
+---
+
+## Spans
+
+`from_file` splits each link into spans of equal length, at most
+`max_span_length_km` each: a link of length `L` gets `ceil(L / max_span_length_km)`
+spans. A link shorter than `max_span_length_km` is the exception and gets 2
+spans (for example a 50 km link with 100 km spans gets two 25 km spans). Each
+span ends with an amplifier that compensates its loss.
+
+---
+
+## Paths
+
+`from_file` computes up to `k_paths` shortest simple paths (by length) for
+every unordered pair of nodes, with `networkx.shortest_simple_paths`. They are
+stored once per pair, ordered from the node that comes first in `node_names`
+to the other one. Both `get_paths(a, b)` and `get_paths(b, a)` return the same
+tuple, in that order:
+
+```python
+topology = TopologyModel.from_file(resolve_topology("ring_4"), k_paths=2)
+[p.node_names for p in topology.get_paths("3", "1")]
+# [('1', '2', '3'), ('1', '4', '3')]
+```
+
+The QoT engine and the runtime state identify a path by its link ids, so the
+direction does not matter for them. `path_from_link_ids` builds a `PathRecord`
+for any other route, for example a sub-path or the output of an external
+planner.
+
+---
+
+## Data classes
+
+All of them are frozen dataclasses.
+
+### TopologyModel
+
+| Field | Description |
+|---|---|
+| `topology_id: str` | Name of the topology (the file stem unless set). |
+| `node_names: tuple[str, ...]` | Node names; a node's index is its position. |
+| `links: tuple[Link, ...]` | Links; `links[i].id == i`. |
+| `paths: tuple[PathRecord, ...]` | All K-shortest paths; `paths[i].id == i`. |
+| `path_index_by_endpoints` | `(source, target) -> tuple[PathRecord, ...]`, both orientations. |
+| `node_index_by_name: dict[str, int]` | Index of each node. |
+| `link_id_by_endpoints` | `(node_a, node_b) -> link id`, with `node_a` the node of lower index. |
+| `link_lengths_km: np.ndarray` | Length of each link, indexed by link id. |
+
+| Method / property | Description |
+|---|---|
+| `from_file(...)` | Build a model from a topology file (see [Loading a topology](#loading-a-topology)). |
+| `node_count`, `link_count`, `path_count` | Sizes. |
+| `get_node_index(name)` | Index of a node. |
+| `get_paths(source, target)` | K-shortest paths between two nodes, by name. |
+| `get_paths_by_ids(source_id, target_id)` | The same, by node index. |
+| `link_by_id(link_id)` | A link by id. |
+| `link_between(a, b)` | The link between two nodes, in either order. `KeyError` if none. |
+| `path_from_link_ids(link_ids, *, path_id=-1)` | A `PathRecord` for a route given as links in order of travel, with `k=-1`. `ValueError` if the list is empty, an id is unknown, or two consecutive links do not share a node. |
+| `with_span_updates(updates)` | A new model with the loss and/or NF of some spans changed (see [SpanUpdate](#spanupdate)). |
 
 ### Link
 
-```cython
-cdef class Link:
-    cdef public int id
-    cdef public str node1
-    cdef public str node2
-    cdef public double length
-    cdef public tuple spans  # Tuple of Span objects
+| Field | Description |
+|---|---|
+| `id: int` | Link id. |
+| `source_name`, `target_name: str` | End nodes, in file order. Links are undirected. |
+| `source_index`, `target_index: int` | Indices of the end nodes. |
+| `length_km: float` | Length. |
+| `spans: tuple[Span, ...]` | Spans from `source_name` to `target_name`. |
 
-    def __init__(self, int id, str node1, str node2, double length, tuple spans):
-        ...
-```
+### Span
 
-- **Description:** Represents a connection between two network nodes, comprising multiple spans.
-- **Attributes:**
-  - `id`: Unique identifier.
-  - `node1`, `node2`: Connected node identifiers.
-  - `length`: Total length (km).
-  - `spans`: Tuple of `Span` objects.
-- **Methods:**
-  - `__repr__()`: String representation.
+One fibre span followed by the amplifier that compensates its loss.
 
----
+| Field | Description |
+|---|---|
+| `length_km: float` | Fibre length. |
+| `attenuation_db_per_km: float` | Fibre loss coefficient. |
+| `noise_figure_db: float` | Noise figure of the amplifier at the end of the span. |
+| `input_loss_db: float = 0.0` | Lumped loss before the fibre; it lowers the launch power. |
+| `output_loss_db: float = 0.0` | Lumped loss after the fibre, before the amplifier. |
+| `amplifier_type: str \| None = None` | Equipment type of the amplifier (informational). |
+| `gain_ripple: GainRipple \| None = None` | Wavelength-dependent gain deviation, or `None` for a flat gain. |
 
-### Modulation
+Derived properties: `attenuation_normalized` (field attenuation in 1/m),
+`noise_figure_normalized` (linear NF), `input_loss_linear`,
+`output_loss_linear`, and `total_loss_db` (fibre plus lumped losses, i.e. the
+gain the amplifier must provide).
 
-```cython
-cdef class Modulation:
-    cdef public str name
-    cdef public double maximum_length
-    cdef public int spectral_efficiency
-    cdef public double minimum_osnr
-    cdef public double inband_xt
+`from_file` only sets the length, attenuation and NF. The other fields come
+from `apply_inventory`.
 
-    def __init__(self, str name, double maximum_length, int spectral_efficiency, double minimum_osnr=0.0, double inband_xt=0.0):
-        ...
-```
+### PathRecord
 
-- **Description:** Defines a modulation format used in optical transmissions.
-- **Attributes:**
-  - `name`: Modulation name.
-  - `maximum_length`: Maximum feasible transmission length (km).
-  - `spectral_efficiency`: Bits per second per Hz.
-  - `minimum_osnr`: Minimum required OSNR (dB).
-  - `inband_xt`: In-band cross-talk factor.
-- **Methods:**
-  - `__repr__()`: String representation.
+| Field | Description |
+|---|---|
+| `id: int` | Position in `TopologyModel.paths`, or `-1` (or `path_id`) for a record from `path_from_link_ids`. |
+| `k: int` | Rank among the paths of its node pair, from 0; `-1` for a record from `path_from_link_ids`. |
+| `node_names`, `node_indices` | Nodes in order of travel. |
+| `link_ids: tuple[int, ...]` | Links in order of travel. |
+| `hops: int` | Number of links. |
+| `length_km: float` | Total length. |
 
----
+### SpanUpdate
 
-### Path
+New fibre loss and/or amplifier NF for one span, applied by
+`TopologyModel.with_span_updates` or, during a simulation, by
+`Simulator.update_spans` / `OpticalEnv.update_spans`.
 
-```cython
-cdef class Path:
-    cdef public int id
-    cdef public int k
-    cdef public tuple node_list     # Tuple of strings
-    cdef public tuple links         # Tuple of Link objects
-    cdef public int hops
-    cdef public double length
-    cdef public Modulation best_modulation  # Can be None
+| Field | Description |
+|---|---|
+| `link_id: int` | Link of the span. |
+| `span_index: int` | Position of the span in the link, from 0 (the span after `source_name`). |
+| `attenuation_db_per_km: float \| None = None` | New loss; `None` keeps the current one. |
+| `noise_figure_db: float \| None = None` | New NF; `None` keeps the current one. |
 
-    def __init__(self, int id, int k, tuple node_list, tuple links, int hops, double length, Modulation best_modulation=None):
-        ...
-```
-
-- **Description:** Represents a specific route through the network, consisting of multiple links.
-- **Attributes:**
-  - `id`: Unique identifier.
-  - `k`: Path rank (e.g., 1st shortest).
-  - `node_list`: Sequence of nodes in the path.
-  - `links`: Tuple of `Link` objects in the path.
-  - `hops`: Number of hops (links).
-  - `length`: Total path length (km).
-  - `best_modulation`: Optimal modulation format for the path.
-- **Methods:**
-  - `get_node_list()`: Returns the sequence of nodes.
-  - `__repr__()`: String representation.
-
----
-
-## Utility Functions
-
-### get_k_shortest_paths
-
-```python
-def get_k_shortest_paths(G: nx.Graph, source: str, target: str, k: int, weight=None):
-    ...
-```
-
-- **Description:** Retrieves the top `k` shortest simple paths between two nodes in the graph.
-- **Parameters:**
-  - `G`: NetworkX graph.
-  - `source`, `target`: Node identifiers.
-  - `k`: Number of paths to retrieve.
-  - `weight`: Edge attribute to use as weight.
-- **Returns:** Tuple of paths.
-
----
-
-### get_path_weight
-
-```python
-def get_path_weight(graph, path, weight="length"):
-    ...
-```
-
-- **Description:** Calculates the total weight of a given path based on a specified edge attribute.
-- **Parameters:**
-  - `graph`: NetworkX graph.
-  - `path`: Sequence of nodes representing the path.
-  - `weight`: Edge attribute to sum.
-- **Returns:** Total weight (float).
-
----
-
-### get_best_modulation_format_by_length
-
-```python
-def get_best_modulation_format_by_length(length: float, modulations: Sequence[Modulation]) -> Modulation:
-    ...
-```
-
-- **Description:** Selects the most spectrally efficient modulation format that can support a given path length.
-- **Parameters:**
-  - `length`: Path length (km).
-  - `modulations`: Available modulation formats.
-- **Returns:** Suitable `Modulation` object.
-- **Raises:** `ValueError` if no suitable modulation is found.
-
----
-
-### calculate_geographical_distance
-
-```python
-def calculate_geographical_distance(latlong1: tuple[float, ...], latlong2: tuple[float, ...]) -> float:
-    ...
-```
-
-- **Description:** Computes the geographical distance between two latitude-longitude coordinates using the Haversine formula.
-- **Parameters:**
-  - `latlong1`, `latlong2`: Tuples containing latitude and longitude.
-- **Returns:** Distance in kilometers (float).
-
----
-
-### read_sndlib_topology
-
-```python
-def read_sndlib_topology(file_name: str) -> nx.Graph:
-    ...
-```
-
-- **Description:** Parses an SNDLib XML topology file and constructs a NetworkX graph with nodes and links.
-- **Parameters:**
-  - `file_name`: Path to the XML topology file.
-- **Returns:** NetworkX graph with added attributes.
-
----
-
-### read_txt_file
-
-```python
-def read_txt_file(file_name: str) -> nx.Graph:
-    ...
-```
-
-- **Description:** Reads a custom TXT topology file and constructs a NetworkX graph.
-- **Parameters:**
-  - `file_name`: Path to the TXT topology file.
-- **Returns:** NetworkX graph with added attributes.
-
----
-
-### get_topology
-
-```python
-def get_topology(
-    file_path: str,
-    topology_name: str,
-    modulations: Optional[Tuple[Modulation]] = None,
-    max_span_length: float = 100,
-    default_attenuation: float = 0.2,
-    default_noise_figure: float = 4.5,
-    k_paths: int = 5
-) -> nx.Graph:
-    ...
-```
-
-- **Description:** Generates a network topology with spans, links, and precomputed k-shortest paths.
-- **Parameters:**
-  - `file_path`: Path to the topology file (.xml or .txt).
-  - `topology_name`: Name assigned to the topology.
-  - `modulations`: Optional tuple of modulation formats.
-  - `max_span_length`: Maximum span length (km).
-  - `default_attenuation`: Default attenuation per span (dB/km).
-  - `default_noise_figure`: Default noise figure (dB).
-  - `k_paths`: Number of shortest paths to compute.
-- **Returns:** NetworkX graph with added attributes and paths.
-
----
-
-### get_best_modulation_format
-
-```python
-def get_best_modulation_format(length: float, modulations: Sequence[Modulation]) -> Modulation:
-    ...
-```
-
-- **Description:** Selects the most spectrally efficient modulation format that can support a given path length.
-- **Parameters:**
-  - `length`: Path length (km).
-  - `modulations`: Available modulation formats.
-- **Returns:** Suitable `Modulation` object.
-- **Raises:** `ValueError` if no suitable modulation is found.
-
----
-
-## Dependencies
-
-- **Cython**: For performance optimization.
-- **NetworkX**: Graph operations and network topology management.
-- **NumPy**: Numerical computations and array manipulations.
-- **Heapq**: Priority queue management for event scheduling.
-- **Math**: Mathematical functions.
-- **Typing**: Type annotations for better code clarity.
-
-Ensure all dependencies are installed, preferably within a virtual environment:
-
-```bash
-pip install cython networkx numpy
-```
-
----
-
-## License and Credits
-
-**Optical Networking Gym** is licensed under the [MIT License](https://github.com/carlosnatalino/optical-networking-gym/blob/main/LICENSE). Special thanks to all contributors and the open-source community for their support and contributions.
-
----
+`with_span_updates` applies the updates in order (a later update of the same
+span wins) and shares everything else with the original model. It raises
+`ValueError`, without changing anything, if a link id or span index is out of
+range or a value is not finite and positive. See
+[Runtime physical-layer updates](physical_layer.md#runtime-physical-layer-updates-aging)
+for the simulation side.
