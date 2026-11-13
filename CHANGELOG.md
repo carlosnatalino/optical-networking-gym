@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `TopologyModel.from_file` reads `.json` files as a T-API topology context
+  (`tapi-topology:topology-context`, optionally wrapped in
+  `tapi-common:context`). Each ROADM becomes a node (named without the
+  `roadm ` prefix), and the two unidirectional fibre links between a ROADM
+  pair become one undirected link. Its length comes from the
+  `propagation-delay` (ns × c / 1.47), averaged over the two directions.
+  Transceivers and their zero-delay links are ignored. Span length,
+  attenuation and noise figure take the usual `from_file` defaults. Only the
+  first topology of the context is read. Duplicate ROADM names, a missing
+  topology context, or links to unknown nodes raise `ValueError`.
+  `resolve_topology` (and so `make_env(topology_name=..., topology_dir=...)`)
+  also looks for `<name>.json`, and `examples/create_topology.py` accepts
+  T-API files. New example topology
+  `examples/topologies/coronet_tapi_topology_context.json` (CORONET CONUS,
+  75 ROADMs, 99 links). Closes #3.
+
 ## 0.4.0
 
 ### Added
