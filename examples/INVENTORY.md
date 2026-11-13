@@ -17,6 +17,10 @@ What actually ships under `examples/`:
   driven by the action mask.
 - `heuristics/runtime_first_fit.py`, `heuristics/runtime_random.py`: policies
   driven by the runtime heuristic context.
+- `heuristics/disruption_aware_first_fit.py`: compare plain first-fit with a
+  first-fit that rejects requests whose admission would push established
+  services below their QoT threshold (the simulator only measures
+  disruptions; admission is the policy's decision).
 - `heuristics/load_sweep.py`: sweep episode blocking across loads and policies.
 - `heuristics/static_first_fit_trace.py`: replay a captured traffic table and
   write a step trace.
